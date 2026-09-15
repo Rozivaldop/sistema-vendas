@@ -2,8 +2,8 @@ import json
 import re
 import uuid
 from datetime import datetime
-import gspread
 from dateutil.relativedelta import relativedelta
+import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
 import streamlit as st
@@ -11,6 +11,10 @@ import streamlit as st
 st.set_page_config(
     page_title="Sistema de Vendas & Cobranças", layout="wide", page_icon="📊"
 )
+
+# Inicialização da chave de controle para zerar o campo de pagamento
+if "versao_pagto" not in st.session_state:
+  st.session_state.versao_pagto = 0
 
 COLUNAS_ESPERADAS = [
     "ID",
@@ -198,7 +202,7 @@ def expandir_todas_parcelas(df_vendas):
   return pd.DataFrame(lista_parcelas)
 
 
-# --- LOGIN ---
+# --- TELA DE LOGIN ---
 if "autenticado" not in st.session_state:
   st.session_state.autenticado = False
 
@@ -215,6 +219,7 @@ if not st.session_state.autenticado:
       else:
         st.error("Usuário ou senha incorretos.")
 else:
+  # --- BARRA LATERAL ---
   st.sidebar.title("Opções")
   if st.sidebar.button("🔄 Recarregar Dados"):
     st.cache_data.clear()
@@ -224,6 +229,7 @@ else:
     st.session_state.autenticado = False
     st.rerun()
 
+  # --- CABEÇALHO ---
   col_t1, col_t2 = st.columns([3, 1])
   with col_t1:
     st.title("📊 Gestão de Vendas & Recebimentos")
@@ -339,12 +345,10 @@ else:
         dt_1_str = dados_venda.get("Data", "")
       data_1_parsed = parse_data_br(dt_1_str)
 
-      # --- CHAVE DO CAMPO DE PAGAMENTO HOJE ---
-      key_pagto_hoje = f"novo_pagto_{venda_id_alvo}"
-
-      # Garante inicialização com 0.0 na memória
-      if key_pagto_hoje not in st.session_state:
-        st.session_state[key_pagto_hoje] = 0.0
+      # CHAVE DINÂMICA QUE FORÇA O ZERAMENTO DO CAMPO
+      key_pagto_hoje = (
+          f"novo_pagto_{venda_id_alvo}_{st.session_state.versao_pagto}"
+      )
 
       col_edit1, col_edit2 = st.columns(2)
 
@@ -368,6 +372,7 @@ else:
         valor_novo_pagamento = st.number_input(
             "➕ Valor Pago HOJE (Adicionar ao total já pago)",
             min_value=0.0,
+            value=0.0,
             format="%.2f",
             step=5.0,
             key=key_pagto_hoje,
@@ -453,8 +458,8 @@ else:
               )
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
-              # APÓS SALVAR, ZERA O CAMPO
-              st.session_state[key_pagto_hoje] = 0.0
+              # Incrementar a chave força a recriação do componente com 0.0
+              st.session_state.versao_pagto += 1
 
               st.success(
                   f"✅ Pagamento de R$ {valor_novo_pagamento:,.2f} salvo com"
