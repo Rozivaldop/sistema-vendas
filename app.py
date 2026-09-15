@@ -337,14 +337,10 @@ else:
               step=1.0,
               key="in_pago_manual",
           )
-          if novo_valor_pago_manual != novo_valor_pago_calculado:
-            novo_valor_pago_final = novo_valor_pago_manual
-          else:
-            novo_valor_pago_final = novo_valor_pago_calculado
-        else:
-          novo_valor_pago_final = novo_valor_pago_calculado
 
-        if valor_novo_pagamento > 0:
+        novo_valor_pago_final = novo_valor_pago_manual
+
+        if valor_novo_pagamento > 0 or novo_valor_pago_final != val_pago_atual:
           st.success(
               f"Novo Total Pago será: **R$ {novo_valor_pago_final:,.2f}**"
           )
