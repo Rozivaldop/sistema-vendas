@@ -351,16 +351,13 @@ else:
             f" {val_pago_atual:,.2f}"
         )
 
-        key_novo_pagto = f"novo_pagto_{venda_id_alvo}"
-        if key_novo_pagto not in st.session_state:
-          st.session_state[key_novo_pagto] = 0.0
-
         valor_novo_pagamento = st.number_input(
             "➕ Registrar NOVO Pagamento (Somar ao que já foi pago)",
             min_value=0.0,
+            value=0.0,
             format="%.2f",
             step=5.0,
-            key=key_novo_pagto,
+            key=f"novo_pagto_{venda_id_alvo}",
             help=(
                 "Digite o valor pago HOJE. Ele será somado ao valor já pago"
                 " anterior."
@@ -443,8 +440,6 @@ else:
               )
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
-              st.session_state[key_novo_pagto] = 0.0
-
               st.success(
                   f"✅ Sucesso! Novo Valor Total Pago registrado: R$"
                   f" {novo_valor_pago_final:,.2f}"
@@ -471,7 +466,6 @@ else:
             novo_valor_total,
             novo_valor_pago_final,
         )
-        # Exibe colunas limpas para a prévia
         cols_crono_preview = [
             "Nº Parcela",
             "Vencimento",
@@ -492,10 +486,8 @@ else:
     st.header("Análise Financeira e Contas a Receber")
 
     if not df_vendas.empty:
-      # Gera a base expandida por parcela
       df_parcelas = expandir_todas_parcelas(df_vendas)
 
-      # Ordena os meses cronologicamente para o filtro
       df_parcelas_ordenadas = df_parcelas.sort_values(by="Data_Venc_Obj")
       meses_vencimento = (
           df_parcelas_ordenadas["Ano_Mes"].dropna().unique().tolist()
@@ -515,7 +507,6 @@ else:
       else:
         df_parc_filtrado = df_parcelas.copy()
 
-      # Cálculo dos totais
       total_a_receber_mes = df_parc_filtrado[
           df_parc_filtrado["Situação"] == "⏳ Pendente"
       ]["Valor Parcela"].sum()
@@ -533,7 +524,6 @@ else:
 
       st.divider()
 
-      # Exibição das parcelas com opção de filtro por Pendentes ou Todas
       st.subheader(
           f"📋 Detalhamento de Parcelas ({mes_selecionado})"
       )
@@ -552,7 +542,6 @@ else:
         df_exibir = df_parc_filtrado.copy()
 
       if not df_exibir.empty:
-        # Formata valor para exibição bonita
         df_exibir_tabela = df_exibir[[
             "Cliente",
             "Produto",
