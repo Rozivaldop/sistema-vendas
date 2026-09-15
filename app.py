@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from datetime import datetime
 import gspread
@@ -54,7 +55,7 @@ def carregar_dados():
 
 
 def parse_data_br(data_str):
-  """Converte strings de data em objeto date de forma segura"""
+  """Converte strings de data em objeto date"""
   if isinstance(data_str, datetime):
     return data_str.date()
   if not isinstance(data_str, str) or not data_str.strip():
@@ -73,17 +74,21 @@ def safe_float(val, default=0.0):
   try:
     if pd.isna(val) or val == "":
       return default
-    return float(val)
+    return float(str(val).replace(",", "."))
   except (ValueError, TypeError):
     return default
 
 
 def safe_int(val, default=1):
-  """Converte valor para int de forma segura"""
+  """Converte valor para inteiro extraindo apenas os dígitos numéricos"""
   try:
     if pd.isna(val) or val == "":
       return default
-    return int(val)
+    # Extrai o primeiro número encontrado no texto (ex: "3 parcelas" -> 3)
+    numeros = re.findall(r"\d+", str(val))
+    if numeros:
+      return int(numeros[0])
+    return default
   except (ValueError, TypeError):
     return default
 
