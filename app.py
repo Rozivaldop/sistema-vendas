@@ -25,7 +25,7 @@ COLUNAS_ESPERADAS = [
 ]
 
 
-# --- CONEXÃO COM O GOOGLE SHEETS (SEMM CACHE DE DADOS) ---
+# --- CONEXÃO COM O GOOGLE SHEETS ---
 def obter_conexao():
   scope = [
       "https://www.googleapis.com/auth/spreadsheets",
@@ -42,7 +42,7 @@ def obter_conexao():
 
 
 def carregar_dados():
-  """Lê a planilha diretamente do Google Sheets sem armazenar em cache antigo"""
+  """Lê a planilha diretamente do Google Sheets sem cache"""
   try:
     sheet = obter_conexao()
     dados = sheet.get_all_values()
@@ -81,13 +81,11 @@ def safe_float(val, default=0.0):
       return float(val)
 
     s = str(val).strip()
-    # Limpa caracteres desnecessários mantendo dígitos, ponto, vírgula e sinal
     s = re.sub(r"[^\d.,-]", "", s)
 
     if not s:
       return default
 
-    # Trata padrão brasileiro: substitui vírgula decimal por ponto
     if "," in s and "." in s:
       s = s.replace(".", "").replace(",", ".")
     elif "," in s:
@@ -99,7 +97,7 @@ def safe_float(val, default=0.0):
 
 
 def safe_int(val, default=1):
-  """Converte quantidade de parcelas tratando vírgula decimal ex: 3,00 -> 3"""
+  """Converte quantidade de parcelas tratando decimais ex: 3,00 -> 3"""
   try:
     if pd.isna(val) or val == "" or val is None:
       return default
@@ -179,7 +177,7 @@ if not st.session_state.autenticado:
       else:
         st.error("Usuário ou senha incorretos.")
 else:
-  # BARRA LATERAL COM BOTÃO DE RECARREGAR
+  # BARRA LATERAL
   st.sidebar.title("Opções")
   if st.sidebar.button("🔄 Recarregar Dados do Sheets"):
     st.cache_data.clear()
@@ -246,10 +244,7 @@ else:
             sheet = obter_conexao()
             venda_id = str(uuid.uuid4())[:8]
 
-            if (
-                valor_pago_inicial >= valor_total
-                and valor_total > 0
-            ):
+            if valor_pago_inicial >= valor_total and valor_total > 0:
               status_inicial = "Pago"
             elif valor_pago_inicial > 0:
               status_inicial = "Parcial"
@@ -267,9 +262,7 @@ else:
                 data_primeira_parcela.strftime("%d/%m/%Y"),
                 status_inicial,
             ]
-            sheet.append_row(
-                nova_linha, value_input_option="USER_ENTERED"
-            )
+            sheet.append_row(nova_linha, value_input_option="USER_ENTERED")
             st.success(
                 f"Venda para **{cliente}** salva com sucesso! (ID: {venda_id})"
             )
@@ -286,8 +279,8 @@ else:
       opcoes_vendas = df_vendas.apply(
           lambda row: (
               f"ID: {row.get('ID', '')} | {row.get('Cliente', '')} - Total: R$"
-              f" {safe_float(row.get('Valor Total', 0)):.2f} | Pago: R$"
-              f" {safe_float(row.get('Valor Pago', 0)):.2f}"
+              f" {safe_float(row.get('Valor Total', 0)):.2f} | Pago Anterior:"
+              f" R$ {safe_float(row.get('Valor Pago', 0)):.2f}"
           ),
           axis=1,
       ).tolist()
@@ -318,14 +311,43 @@ else:
             key="in_total",
         )
 
-        novo_valor_pago = st.number_input(
-            "Valor ACUMULADO Já Pago pelo Cliente (R$)",
+        st.info(f"💰 **Já Pago Anteriormente:** R$ {val_pago_atual:,.2f}")
+
+        # PAGAMENTO ADICIONAL (SOMA AUTOMÁTICA)
+        valor_novo_pagamento = st.number_input(
+            "➕ Adicionar Novo Pagamento de Hoje (R$)",
             min_value=0.0,
-            value=min(float(val_pago_atual), float(novo_valor_total)),
+            value=0.0,
             format="%.2f",
-            step=1.0,
-            key="in_pago",
+            step=5.0,
+            key="in_novo_pagto",
+            help="Digite quanto o cliente está pagando agora. O sistema vai somar sozinho!",
         )
+
+        novo_valor_pago_calculado = min(
+            val_pago_atual + valor_novo_pagamento, novo_valor_total
+        )
+
+        with st.expander("🛠️ Ajustar Total Pago Acumulado Manualmente"):
+          novo_valor_pago_manual = st.number_input(
+              "Valor Acumulado Corrigido (R$)",
+              min_value=0.0,
+              value=float(novo_valor_pago_calculado),
+              format="%.2f",
+              step=1.0,
+              key="in_pago_manual",
+          )
+          if novo_valor_pago_manual != novo_valor_pago_calculado:
+            novo_valor_pago_final = novo_valor_pago_manual
+          else:
+            novo_valor_pago_final = novo_valor_pago_calculado
+        else:
+          novo_valor_pago_final = novo_valor_pago_calculado
+
+        if valor_novo_pagamento > 0:
+          st.success(
+              f"Novo Total Pago será: **R$ {novo_valor_pago_final:,.2f}**"
+          )
 
         novas_parcelas = st.number_input(
             "Quantidade Total de Parcelas",
@@ -342,10 +364,10 @@ else:
             key="in_dt1",
         )
 
-        saldo_restante_calc = novo_valor_total - novo_valor_pago
+        saldo_restante_calc = novo_valor_total - novo_valor_pago_final
         if saldo_restante_calc <= 0 and novo_valor_total > 0:
           status_sugerido = "Pago"
-        elif novo_valor_pago > 0:
+        elif novo_valor_pago_final > 0:
           status_sugerido = "Parcial"
         else:
           status_sugerido = "A Receber"
@@ -358,7 +380,7 @@ else:
         )
 
         btn_atualizar = st.button(
-            "Salvar Alterações e Recalcular", type="primary"
+            "💾 Registrar Pagamento e Recalcular", type="primary"
         )
 
         if btn_atualizar:
@@ -370,7 +392,7 @@ else:
               linha_sheets = cell.row
 
               sheet.update_cell(linha_sheets, 5, float(novo_valor_total))
-              sheet.update_cell(linha_sheets, 6, float(novo_valor_pago))
+              sheet.update_cell(linha_sheets, 6, float(novo_valor_pago_final))
               sheet.update_cell(linha_sheets, 7, int(novas_parcelas))
               sheet.update_cell(
                   linha_sheets, 8, nova_data_1.strftime("%d/%m/%Y")
@@ -378,8 +400,8 @@ else:
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
-                  f"Venda {venda_id_alvo} atualizada com sucesso no Google"
-                  " Sheets!"
+                  f"Pagamento registrado com sucesso! Total pago acumulado: R$"
+                  f" {novo_valor_pago_final:,.2f}"
               )
               st.rerun()
             else:
@@ -392,13 +414,16 @@ else:
       with col_edit2:
         st.subheader("🗓️ Cronograma Atualizado")
 
-        saldo_div_prev = max(0.0, novo_valor_total - novo_valor_pago)
+        saldo_div_prev = max(0.0, novo_valor_total - novo_valor_pago_final)
         c_m1, c_m2 = st.columns(2)
-        c_m1.metric("Total Pago Até Agora", f"R$ {novo_valor_pago:,.2f}")
+        c_m1.metric("Total Pago Acumulado", f"R$ {novo_valor_pago_final:,.2f}")
         c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div_prev:,.2f}")
 
         df_cronograma_prev, _ = gerar_cronograma_recalculado(
-            nova_data_1, novas_parcelas, novo_valor_total, novo_valor_pago
+            nova_data_1,
+            novas_parcelas,
+            novo_valor_total,
+            novo_valor_pago_final,
         )
         st.dataframe(
             df_cronograma_prev, use_container_width=True, hide_index=True
