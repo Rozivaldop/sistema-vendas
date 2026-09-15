@@ -74,7 +74,14 @@ def safe_float(val, default=0.0):
   try:
     if pd.isna(val) or val == "":
       return default
-    return float(str(val).replace(",", "."))
+    # Trata valores como "719,00" ou 719.00
+    val_str = str(val).replace(".", "").replace(",", ".")
+    # Se tinha múltiplos pontos de milhar, mantém apenas a última conversão decimal
+    if str(val).count(",") == 1 and str(val).count(".") == 0:
+      val_str = str(val).replace(",", ".")
+    elif str(val).count(".") == 1 and str(val).count(",") == 0:
+      val_str = str(val)
+    return float(val_str)
   except (ValueError, TypeError):
     return default
 
@@ -84,7 +91,6 @@ def safe_int(val, default=1):
   try:
     if pd.isna(val) or val == "":
       return default
-    # Extrai o primeiro número encontrado no texto (ex: "3 parcelas" -> 3)
     numeros = re.findall(r"\d+", str(val))
     if numeros:
       return int(numeros[0])
@@ -96,7 +102,7 @@ def safe_int(val, default=1):
 def gerar_cronograma_recalculado(
     data_primeira, num_parcelas, valor_total, valor_pago
 ):
-  """Gera o cronograma recalculado com base nas parcelas pagas"""
+  """Gera o cronograma recalculado com base no novo valor total e valor pago"""
   num_parcelas = max(1, safe_int(num_parcelas, 1))
   valor_total = safe_float(valor_total, 0.0)
   valor_pago = safe_float(valor_pago, 0.0)
@@ -190,7 +196,7 @@ else:
         cliente = st.text_input("Nome do Cliente")
         produto = st.text_input("Produto / Serviço Vendido")
         valor_total = st.number_input(
-            "Valor Total (R$)", min_value=0.0, format="%.2f"
+            "Valor Total (R$)", min_value=0.0, format="%.2f", step=1.0
         )
 
       with col_b:
@@ -199,6 +205,7 @@ else:
             min_value=0.0,
             value=0.0,
             format="%.2f",
+            step=1.0,
         )
         parcelas = st.number_input(
             "Quantidade Total de Parcelas", min_value=1, value=1, step=1
@@ -250,14 +257,13 @@ else:
 
   # --- ABA 2: EDITAR / REGISTRAR PAGAMENTO ---
   with aba_atualizar:
-    st.header("Registrar Pagamento / Abater Saldo")
+    st.header("Registrar Pagamento / Editar Venda")
     if not df_vendas.empty:
       opcoes_vendas = df_vendas.apply(
           lambda row: (
               f"ID: {row.get('ID', '')} | {row.get('Cliente', '')} - Total: R$"
               f" {safe_float(row.get('Valor Total', 0)):.2f} | Pago: R$"
-              f" {safe_float(row.get('Valor Pago', 0)):.2f} ("
-              f"{row.get('Status', 'A Receber')})"
+              f" {safe_float(row.get('Valor Pago', 0)):.2f}"
           ),
           axis=1,
       ).tolist()
@@ -282,24 +288,26 @@ else:
           novo_valor_total = st.number_input(
               "Valor Total da Venda (R$)",
               min_value=0.0,
-              value=val_total_atual,
+              value=float(val_total_atual),
               format="%.2f",
+              step=1.0,
           )
 
           novo_valor_pago = st.number_input(
               "Valor ACUMULADO Já Pago pelo Cliente (R$)",
               min_value=0.0,
-              max_value=float(novo_valor_total),
-              value=min(val_pago_atual, novo_valor_total),
+              value=min(float(val_pago_atual), float(novo_valor_total)),
               format="%.2f",
-              help="Exemplo: Se a dívida era 149,00 e ele já pagou 50,00, coloque 50,00 aqui.",
+              step=1.0,
           )
 
           novas_parcelas = st.number_input(
               "Quantidade Total de Parcelas",
               min_value=1,
-              value=parcelas_atual,
+              value=int(parcelas_atual),
+              step=1,
           )
+
           nova_data_1 = st.date_input(
               "Data do 1º Vencimento", data_1_parsed, format="DD/MM/YYYY"
           )
@@ -319,7 +327,7 @@ else:
           )
 
           btn_atualizar = st.form_submit_button(
-              "Salvar e Recalcular Parcelas", type="primary"
+              "Salvar Alterações e Recalcular", type="primary"
           )
 
           if btn_atualizar:
@@ -327,32 +335,36 @@ else:
               sheet = obter_conexao()
               linha_sheets = idx_selecionado + 2
 
-              sheet.update_cell(linha_sheets, 5, novo_valor_total)  # E: Total
+              # Atualiza explicitamente cada coluna na planilha do Google
               sheet.update_cell(
-                  linha_sheets, 6, novo_valor_pago
+                  linha_sheets, 5, float(novo_valor_total)
+              )  # E: Valor Total
+              sheet.update_cell(
+                  linha_sheets, 6, float(novo_valor_pago)
               )  # F: Valor Pago
               sheet.update_cell(
-                  linha_sheets, 7, novas_parcelas
+                  linha_sheets, 7, int(novas_parcelas)
               )  # G: Parcelas
               sheet.update_cell(
                   linha_sheets, 8, nova_data_1.strftime("%d/%m/%Y")
-              )  # H: Data 1ª Parc
-              sheet.update_cell(linha_sheets, 9, novo_status)  # I: Status
+              )  # H: Data 1ª Parcela
+              sheet.update_cell(
+                  linha_sheets, 9, str(novo_status)
+              )  # I: Status
 
-              st.success("Pagamento registrado e parcelas recalculadas!")
+              st.success("Venda atualizada com sucesso na planilha!")
               st.rerun()
             except Exception as e:
               st.error(f"Erro ao atualizar planilha: {e}")
 
       with col_edit2:
-        st.subheader("🗓️ Cronograma Atualizado das Parcelas")
+        st.subheader("🗓️ Cronograma Atualizado")
 
         saldo_div = max(0.0, val_total_atual - val_pago_atual)
         c_m1, c_m2 = st.columns(2)
         c_m1.metric("Total Pago Até Agora", f"R$ {val_pago_atual:,.2f}")
         c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div:,.2f}")
 
-        st.caption("Veja o recalculo das parcelas restantes:")
         df_cronograma, _ = gerar_cronograma_recalculado(
             data_1_parsed, parcelas_atual, val_total_atual, val_pago_atual
         )
