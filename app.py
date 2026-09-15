@@ -78,7 +78,6 @@ def safe_float(val, default=0.0):
       return float(val)
 
     s = str(val).strip()
-    # Se contiver virgula e ponto (ex: 1.200,50), remove ponto e troca virgula por ponto
     if "," in s and "." in s:
       s = s.replace(".", "").replace(",", ".")
     elif "," in s:
@@ -90,13 +89,22 @@ def safe_float(val, default=0.0):
 
 
 def safe_int(val, default=1):
-  """Converte valor para inteiro extraindo apenas os dígitos numéricos"""
+  """Converte valor para inteiro evitando problemas com datas como 1/1/1900"""
   try:
     if pd.isna(val) or val == "":
       return default
-    numeros = re.findall(r"\d+", str(val))
+
+    s_val = str(val).strip()
+
+    # Se a própria célula virou data (ex: 01/01/1900 ou 1/1/1900), extrai o 1º dia como numero
+    if "/" in s_val:
+      partes = s_val.split("/")
+      if partes[0].isdigit():
+        return max(1, int(partes[0]))
+
+    numeros = re.findall(r"\d+", s_val)
     if numeros:
-      return int(numeros[0])
+      return max(1, int(numeros[0]))
     return default
   except (ValueError, TypeError):
     return default
@@ -248,7 +256,9 @@ else:
                 data_primeira_parcela.strftime("%d/%m/%Y"),
                 status_inicial,
             ]
-            sheet.append_row(nova_linha)
+            sheet.append_row(
+                nova_linha, value_input_option="USER_ENTERED"
+            )
             st.success(
                 f"Venda para **{cliente}** salva com sucesso! (ID: {venda_id})"
             )
@@ -348,22 +358,14 @@ else:
             if cell:
               linha_sheets = cell.row
 
-              # Atualiza a linha exata encontrada pelo ID
-              sheet.update_cell(
-                  linha_sheets, 5, float(novo_valor_total)
-              )  # E: Valor Total
-              sheet.update_cell(
-                  linha_sheets, 6, float(novo_valor_pago)
-              )  # F: Valor Pago
-              sheet.update_cell(
-                  linha_sheets, 7, int(novas_parcelas)
-              )  # G: Parcelas
+              # Atualiza enviando como USER_ENTERED para formatar valores corretamente
+              sheet.update_cell(linha_sheets, 5, float(novo_valor_total))
+              sheet.update_cell(linha_sheets, 6, float(novo_valor_pago))
+              sheet.update_cell(linha_sheets, 7, int(novas_parcelas))
               sheet.update_cell(
                   linha_sheets, 8, nova_data_1.strftime("%d/%m/%Y")
-              )  # H: Data 1ª Parcela
-              sheet.update_cell(
-                  linha_sheets, 9, str(novo_status)
-              )  # I: Status
+              )
+              sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
                   f"Venda {venda_id_alvo} atualizada com sucesso para R$"
@@ -380,7 +382,6 @@ else:
       with col_edit2:
         st.subheader("🗓️ Cronograma Atualizado")
 
-        # Exibe as métricas com base no que você está alterando no formulário em tempo real
         saldo_div_prev = max(0.0, novo_valor_total - novo_valor_pago)
         c_m1, c_m2 = st.columns(2)
         c_m1.metric("Total Pago Até Agora", f"R$ {novo_valor_pago:,.2f}")
@@ -405,6 +406,9 @@ else:
       )
       df_vendas["Valor Pago"] = df_vendas["Valor Pago"].apply(
           lambda x: safe_float(x, 0.0)
+      )
+      df_vendas["Parcelas"] = df_vendas["Parcelas"].apply(
+          lambda x: safe_int(x, 1)
       )
       df_vendas["Saldo Devedor"] = (
           df_vendas["Valor Total"] - df_vendas["Valor Pago"]
@@ -471,6 +475,13 @@ else:
   with aba_historico:
     st.header("Todas as Vendas Registradas")
     if not df_vendas.empty:
-      st.dataframe(df_vendas, use_container_width=True, hide_index=True)
+      df_vendas_clean = df_vendas.copy()
+      if "Parcelas" in df_vendas_clean.columns:
+        df_vendas_clean["Parcelas"] = df_vendas_clean["Parcelas"].apply(
+            lambda x: safe_int(x, 1)
+        )
+      st.dataframe(
+          df_vendas_clean, use_container_width=True, hide_index=True
+      )
     else:
       st.info("Nenhum registro encontrado.")
