@@ -46,7 +46,6 @@ if not st.session_state.autenticado:
         usuario = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
         if st.button("Entrar", type="primary"):
-            if usuario == "admin" and senha == "1234":
             if usuario == "rozivaldo" and senha == "1408":
                 st.session_state.autenticado = True
                 st.rerun()
