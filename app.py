@@ -311,40 +311,40 @@ else:
             key=f"total_{venda_id_alvo}",
         )
 
-        # OPÇÃO A: DEFINIR O ACUMULADO DIRETO
-        val_acumulado_edit = st.number_input(
-            "Valor ACUMULADO Já Pago (R$)",
-            min_value=0.0,
-            value=float(val_pago_atual),
-            format="%.2f",
-            step=1.0,
-            key=f"pago_acum_{venda_id_alvo}",
-            help="Mostra o total acumulado já salvo. Altere diretamente aqui se desejar ajustar.",
-        )
+        st.info(f"💵 **Valor Pago Registrado Anteriormente:** R$ {val_pago_atual:,.2f}")
 
-        # OPÇÃO B: SOMAR NOVO PAGAMENTO
+        # Opção 1: Digitar quanto o cliente pagou HOJE para somar
         valor_novo_pagamento = st.number_input(
-            "➕ OU Adicionar Novo Pagamento Hoje (R$)",
+            "➕ Registrar NOVO Pagamento (Somar ao que já foi pago)",
             min_value=0.0,
             value=0.0,
             format="%.2f",
             step=5.0,
             key=f"novo_pagto_{venda_id_alvo}",
-            help="Digite quanto o cliente pagou HOJE para somar ao total acumulado.",
+            help="Digite o valor pago HOJE. Ele será somado ao valor já pago anterior.",
         )
 
-        # SE O USUÁRIO DIGITOU ALGO EM NOVO PAGAMENTO, SOMA AO ACUMULADO. SENÃO, USA O CAMPO ACUMULADO.
-        if valor_novo_pagamento > 0:
-          novo_valor_pago_final = min(
-              val_acumulado_edit + valor_novo_pagamento, novo_valor_total
-          )
-          st.info(
-              f"💡 Soma calculada: R$ {val_acumulado_edit:,.2f} + R$"
-              f" {valor_novo_pagamento:,.2f} = **R$"
-              f" {novo_valor_pago_final:,.2f}**"
+        # Opção 2: Ajuste manual caso queira corrigir o valor final diretamente
+        ajustar_manual = st.checkbox("⚙️ Precisa corrigir o valor total pago manualmente?", key=f"chk_{venda_id_alvo}")
+        
+        if ajustar_manual:
+          novo_valor_pago_final = st.number_input(
+              "Definir Valor Total Pago Acumulado (R$)",
+              min_value=0.0,
+              value=float(val_pago_atual),
+              format="%.2f",
+              step=1.0,
+              key=f"manual_pago_{venda_id_alvo}"
           )
         else:
-          novo_valor_pago_final = min(val_acumulado_edit, novo_valor_total)
+          novo_valor_pago_final = min(val_pago_atual + valor_novo_pagamento, novo_valor_total)
+
+        if valor_novo_pagamento > 0 and not ajustar_manual:
+          st.success(
+              f"💡 Soma calculada: R$ {val_pago_atual:,.2f} + R$"
+              f" {valor_novo_pagamento:,.2f} = **Novo Total Pago: R$"
+              f" {novo_valor_pago_final:,.2f}**"
+          )
 
         novas_parcelas = st.number_input(
             "Quantidade Total de Parcelas",
@@ -377,7 +377,7 @@ else:
         )
 
         btn_atualizar = st.button(
-            "💾 Salvar Alterações e Recalcular", type="primary"
+            "💾 Salvar Pagamento / Alterações", type="primary"
         )
 
         if btn_atualizar:
@@ -397,7 +397,7 @@ else:
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
-                  f"Venda de Rozivaldo atualizada! Total Pago: R$"
+                  f"✅ Sucesso! Novo Valor Total Pago registrado: R$"
                   f" {novo_valor_pago_final:,.2f}"
               )
               st.rerun()
@@ -409,11 +409,11 @@ else:
             st.error(f"Erro ao atualizar planilha: {e}")
 
       with col_edit2:
-        st.subheader("🗓️ Cronograma Atualizado")
+        st.subheader("🗓️ Cronograma Recalculado")
 
         saldo_div_prev = max(0.0, novo_valor_total - novo_valor_pago_final)
         c_m1, c_m2 = st.columns(2)
-        c_m1.metric("Total Pago Acumulado", f"R$ {novo_valor_pago_final:,.2f}")
+        c_m1.metric("Novo Total Pago", f"R$ {novo_valor_pago_final:,.2f}")
         c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div_prev:,.2f}")
 
         df_cronograma_prev, _ = gerar_cronograma_recalculado(
