@@ -153,11 +153,46 @@ def gerar_cronograma_recalculado(
     cronograma.append({
         "Nº Parcela": f"{i+1}/{num_parcelas}",
         "Vencimento": data_str,
-        "Valor da Parcela (R$)": f"{val_parc:.2f}",
+        "Data_Venc_Obj": data_venc,
+        "Ano_Mes": data_venc.strftime("%m/%Y"),
+        "Valor Parcela (R$)": round(val_parc, 2),
         "Situação": st_parc,
     })
 
   return pd.DataFrame(cronograma), saldo_devedor
+
+
+def expandir_todas_parcelas(df_vendas):
+  """Expande todas as vendas em parcelas individuais com suas respectivas datas de vencimento"""
+  lista_parcelas = []
+
+  for _, row in df_vendas.iterrows():
+    venda_id = row.get("ID", "")
+    cliente = row.get("Cliente", "")
+    produto = row.get("Produto", "")
+    val_total = safe_float(row.get("Valor Total", 0))
+    val_pago = safe_float(row.get("Valor Pago", 0))
+    num_parc = safe_int(row.get("Parcelas", 1), 1)
+    dt_1 = row.get("Data 1ª Parcela", row.get("Data", ""))
+
+    df_crono, _ = gerar_cronograma_recalculado(
+        dt_1, num_parc, val_total, val_pago
+    )
+
+    for _, p in df_crono.iterrows():
+      lista_parcelas.append({
+          "ID Venda": venda_id,
+          "Cliente": cliente,
+          "Produto": produto,
+          "Nº Parcela": p["Nº Parcela"],
+          "Vencimento": p["Vencimento"],
+          "Data_Venc_Obj": p["Data_Venc_Obj"],
+          "Ano_Mes": p["Ano_Mes"],
+          "Valor Parcela": p["Valor Parcela (R$)"],
+          "Situação": p["Situação"],
+      })
+
+  return pd.DataFrame(lista_parcelas)
 
 
 # --- AUTENTICAÇÃO E LOGIN ---
@@ -200,7 +235,7 @@ else:
   aba_cadastro, aba_atualizar, aba_dash, aba_historico = st.tabs([
       "➕ Cadastrar Venda",
       "🔄 Registrar Pagamento / Editar",
-      "📈 Dashboard & Filtros",
+      "📈 Dashboard & Contas a Receber",
       "📋 Histórico Completo",
   ])
 
@@ -311,9 +346,11 @@ else:
             key=f"total_{venda_id_alvo}",
         )
 
-        st.info(f"💵 **Valor Pago Registrado Anteriormente:** R$ {val_pago_atual:,.2f}")
+        st.info(
+            "💵 **Valor Pago Registrado Anteriormente:** R$"
+            f" {val_pago_atual:,.2f}"
+        )
 
-        # Garantir chave no session_state para zerar após salvar
         key_novo_pagto = f"novo_pagto_{venda_id_alvo}"
         if key_novo_pagto not in st.session_state:
           st.session_state[key_novo_pagto] = 0.0
@@ -324,7 +361,10 @@ else:
             format="%.2f",
             step=5.0,
             key=key_novo_pagto,
-            help="Digite o valor pago HOJE. Ele será somado ao valor já pago anterior.",
+            help=(
+                "Digite o valor pago HOJE. Ele será somado ao valor já pago"
+                " anterior."
+            ),
         )
 
         ajustar_manual = st.checkbox(
@@ -403,7 +443,6 @@ else:
               )
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
-              # ZERA O CAMPO DE NOVO PAGAMENTO PARA A PRÓXIMA VEZ
               st.session_state[key_novo_pagto] = 0.0
 
               st.success(
@@ -432,93 +471,108 @@ else:
             novo_valor_total,
             novo_valor_pago_final,
         )
+        # Exibe colunas limpas para a prévia
+        cols_crono_preview = [
+            "Nº Parcela",
+            "Vencimento",
+            "Valor Parcela (R$)",
+            "Situação",
+        ]
         st.dataframe(
-            df_cronograma_prev, use_container_width=True, hide_index=True
+            df_cronograma_prev[cols_crono_preview],
+            use_container_width=True,
+            hide_index=True,
         )
 
     else:
       st.info("Nenhuma venda registrada para atualizar.")
 
-  # --- ABA 3: DASHBOARD & FILTROS ---
+  # --- ABA 3: DASHBOARD & CONTAS A RECEBER POR MÊS DE VENCIMENTO ---
   with aba_dash:
     st.header("Análise Financeira e Contas a Receber")
+
     if not df_vendas.empty:
-      df_vendas["Valor Total Calc"] = df_vendas["Valor Total"].apply(
-          safe_float
-      )
-      df_vendas["Valor Pago Calc"] = df_vendas["Valor Pago"].apply(safe_float)
-      df_vendas["Parcelas Calc"] = df_vendas["Parcelas"].apply(safe_int)
+      # Gera a base expandida por parcela
+      df_parcelas = expandir_todas_parcelas(df_vendas)
 
-      df_vendas["Saldo Devedor Calc"] = (
-          df_vendas["Valor Total Calc"] - df_vendas["Valor Pago Calc"]
-      ).clip(lower=0)
-
-      df_vendas["Data_Parsed"] = df_vendas["Data"].apply(parse_data_br)
-      df_vendas["Ano_Mes"] = df_vendas["Data_Parsed"].apply(
-          lambda d: d.strftime("%m/%Y")
+      # Ordena os meses cronologicamente para o filtro
+      df_parcelas_ordenadas = df_parcelas.sort_values(by="Data_Venc_Obj")
+      meses_vencimento = (
+          df_parcelas_ordenadas["Ano_Mes"].dropna().unique().tolist()
       )
 
-      meses_disponiveis = sorted(
-          df_vendas["Ano_Mes"].dropna().unique().tolist(), reverse=True
-      )
-      meses_disponiveis.insert(0, "Todos os Meses")
+      meses_opcoes = ["Todos os Meses de Vencimento"] + meses_vencimento
 
       mes_selecionado = st.selectbox(
-          "📅 Selecione o Mês de Referência (MM/AAAA):", meses_disponiveis
+          "📅 Selecione o Mês de Vencimento das Parcelas (MM/AAAA):",
+          meses_opcoes,
       )
 
-      if mes_selecionado != "Todos os Meses":
-        df_filtrado = df_vendas[df_vendas["Ano_Mes"] == mes_selecionado]
+      if mes_selecionado != "Todos os Meses de Vencimento":
+        df_parc_filtrado = df_parcelas[
+            df_parcelas["Ano_Mes"] == mes_selecionado
+        ]
       else:
-        df_filtrado = df_vendas.copy()
+        df_parc_filtrado = df_parcelas.copy()
 
-      total_geral = df_filtrado["Valor Total Calc"].sum()
-      total_pago = df_filtrado["Valor Pago Calc"].sum()
-      total_a_receber = df_filtrado["Saldo Devedor Calc"].sum()
+      # Cálculo dos totais
+      total_a_receber_mes = df_parc_filtrado[
+          df_parc_filtrado["Situação"] == "⏳ Pendente"
+      ]["Valor Parcela"].sum()
+
+      total_já_recebido_mes = df_parc_filtrado[
+          df_parc_filtrado["Situação"] == "✅ Quitada"
+      ]["Valor Parcela"].sum()
+
+      total_geral_mes = df_parc_filtrado["Valor Parcela"].sum()
 
       col_m1, col_m2, col_m3 = st.columns(3)
-      col_m1.metric("Faturamento Total Vendido", f"R$ {total_geral:,.2f}")
-      col_m2.metric("Total Efetivamente Recebido", f"R$ {total_pago:,.2f}")
-      col_m3.metric("📌 Saldo Pendente A RECEBER", f"R$ {total_a_receber:,.2f}")
+      col_m1.metric("Total Previsto no Mês", f"R$ {total_geral_mes:,.2f}")
+      col_m2.metric("✅ Já Recebido / Quitado", f"R$ {total_já_recebido_mes:,.2f}")
+      col_m3.metric("📌 A RECEBER no Mês", f"R$ {total_a_receber_mes:,.2f}")
 
       st.divider()
-      st.subheader(f"📋 Clientes com Pendência/Saldo Devedor ({mes_selecionado})")
-      df_pendentes = df_filtrado[df_filtrado["Saldo Devedor Calc"] > 0].copy()
 
-      if not df_pendentes.empty:
-        df_pendentes["Valor Total"] = df_pendentes["Valor Total Calc"].apply(
-            lambda x: f"{x:.2f}"
-        )
-        df_pendentes["Valor Pago"] = df_pendentes["Valor Pago Calc"].apply(
-            lambda x: f"{x:.2f}"
-        )
-        df_pendentes["Saldo Devedor"] = df_pendentes["Saldo Devedor Calc"].apply(
-            lambda x: f"{x:.2f}"
-        )
-        df_pendentes["Parcelas"] = df_pendentes["Parcelas Calc"]
+      # Exibição das parcelas com opção de filtro por Pendentes ou Todas
+      st.subheader(
+          f"📋 Detalhamento de Parcelas ({mes_selecionado})"
+      )
 
-        colunas_exibir = [
-            c
-            for c in [
-                "ID",
-                "Data",
-                "Cliente",
-                "Produto",
-                "Valor Total",
-                "Valor Pago",
-                "Saldo Devedor",
-                "Parcelas",
-                "Status",
-            ]
-            if c in df_pendentes.columns
-        ]
+      tipo_filtro_situacao = st.radio(
+          "Filtrar Situação das Parcelas:",
+          ["Apenas Pendentes (A Receber)", "Todas as Parcelas (Quitadas + Pendentes)"],
+          horizontal=True,
+      )
+
+      if "Apenas Pendentes" in tipo_filtro_situacao:
+        df_exibir = df_parc_filtrado[
+            df_parc_filtrado["Situação"] == "⏳ Pendente"
+        ].copy()
+      else:
+        df_exibir = df_parc_filtrado.copy()
+
+      if not df_exibir.empty:
+        # Formata valor para exibição bonita
+        df_exibir_tabela = df_exibir[[
+            "Cliente",
+            "Produto",
+            "Nº Parcela",
+            "Vencimento",
+            "Valor Parcela",
+            "Situação",
+            "ID Venda",
+        ]].copy()
+        df_exibir_tabela["Valor Parcela (R$)"] = df_exibir_tabela[
+            "Valor Parcela"
+        ].apply(lambda x: f"R$ {x:,.2f}")
+        df_exibir_tabela = df_exibir_tabela.drop(columns=["Valor Parcela"])
+
         st.dataframe(
-            df_pendentes[colunas_exibir],
-            use_container_width=True,
-            hide_index=True,
+            df_exibir_tabela, use_container_width=True, hide_index=True
         )
       else:
-        st.success("Nenhuma pendência de pagamento encontrada!")
+        st.success("Nenhuma parcela pendente encontrada para este período!")
+
     else:
       st.info("Nenhuma venda cadastrada ainda.")
 
