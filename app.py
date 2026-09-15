@@ -25,8 +25,7 @@ COLUNAS_ESPERADAS = [
 ]
 
 
-# --- CONEXÃO AUTENTICADA COM O GOOGLE SHEETS ---
-@st.cache_resource
+# --- CONEXÃO COM O GOOGLE SHEETS (SEMM CACHE DE DADOS) ---
 def obter_conexao():
   scope = [
       "https://www.googleapis.com/auth/spreadsheets",
@@ -43,6 +42,7 @@ def obter_conexao():
 
 
 def carregar_dados():
+  """Lê a planilha diretamente do Google Sheets sem armazenar em cache antigo"""
   try:
     sheet = obter_conexao()
     dados = sheet.get_all_values()
@@ -52,7 +52,8 @@ def carregar_dados():
     cabeçalho = [str(c).strip() for c in dados[0]]
     df = pd.DataFrame(dados[1:], columns=cabeçalho)
     return df
-  except Exception:
+  except Exception as e:
+    st.error(f"Erro ao conectar com Google Sheets: {e}")
     return pd.DataFrame(columns=COLUNAS_ESPERADAS)
 
 
@@ -72,7 +73,7 @@ def parse_data_br(data_str):
 
 
 def safe_float(val, default=0.0):
-  """Converte qualquer formato (R$ 149,00, 149.00, etc) para float"""
+  """Suporta vírgula BR (72,90), ponto (72.90) e prefixo R$"""
   try:
     if pd.isna(val) or val == "" or val is None:
       return default
@@ -80,14 +81,13 @@ def safe_float(val, default=0.0):
       return float(val)
 
     s = str(val).strip()
-
-    # Remove R$, espaços e letras
+    # Limpa caracteres desnecessários mantendo dígitos, ponto, vírgula e sinal
     s = re.sub(r"[^\d.,-]", "", s)
 
     if not s:
       return default
 
-    # Converte padrão brasileiro para americano (1.250,50 -> 1250.50)
+    # Trata padrão brasileiro: substitui vírgula decimal por ponto
     if "," in s and "." in s:
       s = s.replace(".", "").replace(",", ".")
     elif "," in s:
@@ -99,16 +99,13 @@ def safe_float(val, default=0.0):
 
 
 def safe_int(val, default=1):
-  """Converte valor para inteiro extraindo apenas os dígitos"""
+  """Converte quantidade de parcelas tratando vírgula decimal ex: 3,00 -> 3"""
   try:
     if pd.isna(val) or val == "" or val is None:
       return default
 
-    s_val = str(val).strip()
-    numeros = re.findall(r"\d+", s_val)
-    if numeros:
-      return max(1, int(numeros[0]))
-    return default
+    num_float = safe_float(val, float(default))
+    return max(1, int(round(num_float)))
   except (ValueError, TypeError):
     return default
 
@@ -165,7 +162,7 @@ def gerar_cronograma_recalculado(
   return pd.DataFrame(cronograma), saldo_devedor
 
 
-# --- LOGIN ---
+# --- AUTENTICAÇÃO E LOGIN ---
 if "autenticado" not in st.session_state:
   st.session_state.autenticado = False
 
@@ -182,12 +179,24 @@ if not st.session_state.autenticado:
       else:
         st.error("Usuário ou senha incorretos.")
 else:
+  # BARRA LATERAL COM BOTÃO DE RECARREGAR
   st.sidebar.title("Opções")
+  if st.sidebar.button("🔄 Recarregar Dados do Sheets"):
+    st.cache_data.clear()
+    st.rerun()
+
   if st.sidebar.button("Sair / Logout"):
     st.session_state.autenticado = False
     st.rerun()
 
-  st.title("📊 Gestão de Vendas & Recebimentos")
+  # CABEÇALHO PRINCIPAL
+  col_t1, col_t2 = st.columns([3, 1])
+  with col_t1:
+    st.title("📊 Gestão de Vendas & Recebimentos")
+  with col_t2:
+    if st.button("🔄 Sincronizar Agora", type="secondary"):
+      st.rerun()
+
   df_vendas = carregar_dados()
 
   aba_cadastro, aba_atualizar, aba_dash, aba_historico = st.tabs([
@@ -270,7 +279,7 @@ else:
         else:
           st.warning("Preencha o nome do cliente e do produto.")
 
-  # --- ABA 2: EDITAR / EDITAR PAGAMENTO ---
+  # --- ABA 2: EDITAR / REGISTRAR PAGAMENTO ---
   with aba_atualizar:
     st.header("Registrar Pagamento / Editar Venda")
     if not df_vendas.empty:
@@ -369,8 +378,8 @@ else:
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
-                  f"Venda {venda_id_alvo} atualizada com sucesso para R$"
-                  f" {novo_valor_total:.2f}!"
+                  f"Venda {venda_id_alvo} atualizada com sucesso no Google"
+                  " Sheets!"
               )
               st.rerun()
             else:
@@ -406,11 +415,9 @@ else:
           safe_float
       )
       df_vendas["Valor Pago Calc"] = df_vendas["Valor Pago"].apply(safe_float)
-      df_vendas["Parcelas Calc"] = df_vendas["Parcelas"].apply(
-          lambda x: safe_int(x, 1)
-      )
+      df_vendas["Parcelas Calc"] = df_vendas["Parcelas"].apply(safe_int)
 
-      df_vendas["Saldo Devedor"] = (
+      df_vendas["Saldo Devedor Calc"] = (
           df_vendas["Valor Total Calc"] - df_vendas["Valor Pago Calc"]
       ).clip(lower=0)
 
@@ -435,7 +442,7 @@ else:
 
       total_geral = df_filtrado["Valor Total Calc"].sum()
       total_pago = df_filtrado["Valor Pago Calc"].sum()
-      total_a_receber = df_filtrado["Saldo Devedor"].sum()
+      total_a_receber = df_filtrado["Saldo Devedor Calc"].sum()
 
       col_m1, col_m2, col_m3 = st.columns(3)
       col_m1.metric("Faturamento Total Vendido", f"R$ {total_geral:,.2f}")
@@ -444,17 +451,17 @@ else:
 
       st.divider()
       st.subheader(f"📋 Clientes com Pendência/Saldo Devedor ({mes_selecionado})")
-      df_pendentes = df_filtrado[df_filtrado["Saldo Devedor"] > 0].copy()
+      df_pendentes = df_filtrado[df_filtrado["Saldo Devedor Calc"] > 0].copy()
 
       if not df_pendentes.empty:
         df_pendentes["Valor Total"] = df_pendentes["Valor Total Calc"].apply(
-            lambda x: f"R$ {x:.2f}"
+            lambda x: f"{x:.2f}"
         )
         df_pendentes["Valor Pago"] = df_pendentes["Valor Pago Calc"].apply(
-            lambda x: f"R$ {x:.2f}"
+            lambda x: f"{x:.2f}"
         )
-        df_pendentes["Saldo Devedor"] = df_pendentes["Saldo Devedor"].apply(
-            lambda x: f"R$ {x:.2f}"
+        df_pendentes["Saldo Devedor"] = df_pendentes["Saldo Devedor Calc"].apply(
+            lambda x: f"{x:.2f}"
         )
         df_pendentes["Parcelas"] = df_pendentes["Parcelas Calc"]
 
