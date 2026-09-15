@@ -279,8 +279,8 @@ else:
       opcoes_vendas = df_vendas.apply(
           lambda row: (
               f"ID: {row.get('ID', '')} | {row.get('Cliente', '')} - Total: R$"
-              f" {safe_float(row.get('Valor Total', 0)):.2f} | Pago Anterior:"
-              f" R$ {safe_float(row.get('Valor Pago', 0)):.2f}"
+              f" {safe_float(row.get('Valor Total', 0)):.2f} | Pago Atual: R$"
+              f" {safe_float(row.get('Valor Pago', 0)):.2f}"
           ),
           axis=1,
       ).tolist()
@@ -311,25 +311,40 @@ else:
             key=f"total_{venda_id_alvo}",
         )
 
-        st.info(f"💰 **Já Pago Anteriormente:** R$ {val_pago_atual:,.2f}")
+        # OPÇÃO A: DEFINIR O ACUMULADO DIRETO
+        val_acumulado_edit = st.number_input(
+            "Valor ACUMULADO Já Pago (R$)",
+            min_value=0.0,
+            value=float(val_pago_atual),
+            format="%.2f",
+            step=1.0,
+            key=f"pago_acum_{venda_id_alvo}",
+            help="Mostra o total acumulado já salvo. Altere diretamente aqui se desejar ajustar.",
+        )
 
-        # PAGAMENTO DE HOJE
+        # OPÇÃO B: SOMAR NOVO PAGAMENTO
         valor_novo_pagamento = st.number_input(
-            "➕ Adicionar Pagamento de Hoje (R$)",
+            "➕ OU Adicionar Novo Pagamento Hoje (R$)",
             min_value=0.0,
             value=0.0,
             format="%.2f",
             step=5.0,
             key=f"novo_pagto_{venda_id_alvo}",
-            help="Digite apenas o valor do pagamento atual.",
+            help="Digite quanto o cliente pagou HOJE para somar ao total acumulado.",
         )
 
-        # SOMA AUTOMÁTICA
-        novo_valor_pago_final = min(
-            val_pago_atual + valor_novo_pagamento, novo_valor_total
-        )
-
-        st.success(f"Novo Total Pago será: **R$ {novo_valor_pago_final:,.2f}**")
+        # SE O USUÁRIO DIGITOU ALGO EM NOVO PAGAMENTO, SOMA AO ACUMULADO. SENÃO, USA O CAMPO ACUMULADO.
+        if valor_novo_pagamento > 0:
+          novo_valor_pago_final = min(
+              val_acumulado_edit + valor_novo_pagamento, novo_valor_total
+          )
+          st.info(
+              f"💡 Soma calculada: R$ {val_acumulado_edit:,.2f} + R$"
+              f" {valor_novo_pagamento:,.2f} = **R$"
+              f" {novo_valor_pago_final:,.2f}**"
+          )
+        else:
+          novo_valor_pago_final = min(val_acumulado_edit, novo_valor_total)
 
         novas_parcelas = st.number_input(
             "Quantidade Total de Parcelas",
@@ -362,7 +377,7 @@ else:
         )
 
         btn_atualizar = st.button(
-            "💾 Registrar Pagamento e Recalcular", type="primary"
+            "💾 Salvar Alterações e Recalcular", type="primary"
         )
 
         if btn_atualizar:
@@ -382,7 +397,7 @@ else:
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
-                  f"Pagamento registrado com sucesso! Novo saldo pago: R$"
+                  f"Venda de Rozivaldo atualizada! Total Pago: R$"
                   f" {novo_valor_pago_final:,.2f}"
               )
               st.rerun()
