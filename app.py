@@ -313,20 +313,25 @@ else:
 
         st.info(f"💵 **Valor Pago Registrado Anteriormente:** R$ {val_pago_atual:,.2f}")
 
-        # Opção 1: Digitar quanto o cliente pagou HOJE para somar
+        # Garantir chave no session_state para zerar após salvar
+        key_novo_pagto = f"novo_pagto_{venda_id_alvo}"
+        if key_novo_pagto not in st.session_state:
+          st.session_state[key_novo_pagto] = 0.0
+
         valor_novo_pagamento = st.number_input(
             "➕ Registrar NOVO Pagamento (Somar ao que já foi pago)",
             min_value=0.0,
-            value=0.0,
             format="%.2f",
             step=5.0,
-            key=f"novo_pagto_{venda_id_alvo}",
+            key=key_novo_pagto,
             help="Digite o valor pago HOJE. Ele será somado ao valor já pago anterior.",
         )
 
-        # Opção 2: Ajuste manual caso queira corrigir o valor final diretamente
-        ajustar_manual = st.checkbox("⚙️ Precisa corrigir o valor total pago manualmente?", key=f"chk_{venda_id_alvo}")
-        
+        ajustar_manual = st.checkbox(
+            "⚙️ Precisa corrigir o valor total pago manualmente?",
+            key=f"chk_{venda_id_alvo}",
+        )
+
         if ajustar_manual:
           novo_valor_pago_final = st.number_input(
               "Definir Valor Total Pago Acumulado (R$)",
@@ -334,10 +339,12 @@ else:
               value=float(val_pago_atual),
               format="%.2f",
               step=1.0,
-              key=f"manual_pago_{venda_id_alvo}"
+              key=f"manual_pago_{venda_id_alvo}",
           )
         else:
-          novo_valor_pago_final = min(val_pago_atual + valor_novo_pagamento, novo_valor_total)
+          novo_valor_pago_final = min(
+              val_pago_atual + valor_novo_pagamento, novo_valor_total
+          )
 
         if valor_novo_pagamento > 0 and not ajustar_manual:
           st.success(
@@ -395,6 +402,9 @@ else:
                   linha_sheets, 8, nova_data_1.strftime("%d/%m/%Y")
               )
               sheet.update_cell(linha_sheets, 9, str(novo_status))
+
+              # ZERA O CAMPO DE NOVO PAGAMENTO PARA A PRÓXIMA VEZ
+              st.session_state[key_novo_pagto] = 0.0
 
               st.success(
                   f"✅ Sucesso! Novo Valor Total Pago registrado: R$"
