@@ -1,83 +1,76 @@
 import streamlit as st
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# Configuração da página do Streamlit
-st.set_page_config(
-    page_title="Sistema de Vendas",
-    layout="wide",
-    page_icon="📊"
-)
+# Configuração da página
+st.set_page_config(page_title="Sistema de Vendas", layout="wide", page_icon="📊")
 
-# Colunas padrão esperadas na planilha
 COLUNAS_ESPERADAS = ["Data", "Cliente", "Produto", "Valor", "Status"]
 
-# --- FUNÇÃO PARA CARREGAR DADOS ---
+# --- CONEXÃO AUTENTICADA COM O GOOGLE SHEETS ---
+@st.cache_resource
+def obter_conexao():
+    scope = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    # Carrega as credenciais da Service Account configuradas nos Secrets
+    creds_dict = dict(st.secrets["gcp_service_account"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+    client = gspread.authorize(creds)
+    
+    # Abre a planilha pelo link fornecido nas Secrets
+    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    return client.open_by_url(url).sheet1
+
 def carregar_dados():
     try:
-        url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-        # Extrai o ID da planilha do Google a partir do link das Secrets
-        sheet_id = url.split("/d/")[1].split("/")[0]
-        csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv"
-        
-        # Lê a planilha usando Pandas
-        df = pd.read_csv(csv_url)
-        
-        # Garante que as colunas estejam corretas mesmo se a planilha tiver menos colunas
-        if len(df.columns) == len(COLUNAS_ESPERADAS):
-            df.columns = COLUNAS_ESPERADAS
-        else:
-            # Caso a planilha venha sem cabeçalho ou com colunas a menos
-            df = pd.DataFrame(columns=COLUNAS_ESPERADAS)
-            
+        sheet = obter_conexao()
+        dados = sheet.get_all_records()
+        df = pd.DataFrame(dados)
+        if df.empty:
+            return pd.DataFrame(columns=COLUNAS_ESPERADAS)
         return df
     except Exception as e:
-        # Retorna DataFrame vazio configurado caso falhe ao ler
         return pd.DataFrame(columns=COLUNAS_ESPERADAS)
 
-
-# --- SISTEMA DE LOGIN ---
+# --- CONTROLE DE LOGIN ---
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
 if not st.session_state.autenticado:
     st.title("🔒 Login do Sistema de Vendas")
-    
-    col1, col2 = st.columns([1, 2])
+    col1, _ = st.columns([1, 2])
     with col1:
         usuario = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
-        
         if st.button("Entrar", type="primary"):
             if usuario == "rozivaldo" and senha == "1408":
                 st.session_state.autenticado = True
                 st.rerun()
             else:
                 st.error("Usuário ou senha incorretos.")
-
 else:
-    # --- ÁREA LOGADA ---
+    # --- ÁREA INTERNA LOGADA ---
     st.sidebar.title("Opções")
     if st.sidebar.button("Sair / Logout"):
         st.session_state.autenticado = False
         st.rerun()
 
     st.title("📊 Painel de Controle de Vendas")
-    
-    # Carrega os dados da planilha
     df_vendas = carregar_dados()
 
-    # Navegação por abas
     aba_cadastro, aba_dash, aba_historico = st.tabs([
         "➕ Cadastrar Venda", 
         "📈 Resumo de Vendas", 
         "📋 Histórico Completo"
     ])
 
-    # --- ABA 1: CADASTRO DE VENDAS ---
+    # --- ABA 1: CADASTRO ---
     with aba_cadastro:
         st.header("Registrar Nova Venda")
-        
         with st.form("form_nova_venda", clear_on_submit=True):
             data_venda = st.date_input("Data da Venda", datetime.now())
             cliente = st.text_input("Nome do Cliente")
@@ -90,31 +83,21 @@ else:
             if submeter:
                 if cliente.strip() != "" and produto.strip() != "":
                     try:
-                        # Cria o novo registro exatamente com as 5 colunas necessárias
-                        nova_linha = pd.DataFrame(
-                            [[str(data_venda), cliente, produto, float(valor), status]], 
-                            columns=COLUNAS_ESPERADAS
-                        )
-                        
-                        # Concatena a nova venda ao histórico
-                        if df_vendas.empty:
-                            df_atualizado = nova_linha
-                        else:
-                            df_atualizado = pd.concat([df_vendas, nova_linha], ignore_index=True)
-                        
-                        st.success(f"Venda para **{cliente}** registrada com sucesso!")
+                        sheet = obter_conexao()
+                        nova_linha = [str(data_venda), cliente, produto, float(valor), status]
+                        # Adiciona a linha diretamente na aba da planilha
+                        sheet.append_row(nova_linha)
+                        st.success(f"Venda para **{cliente}** salva com sucesso na planilha!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Erro ao salvar registro: {e}")
+                        st.error(f"Erro ao salvar na planilha: {e}")
                 else:
-                    st.warning("Por favor, preencha o nome do cliente e do produto.")
+                    st.warning("Preencha o nome do cliente e do produto.")
 
-    # --- ABA 2: RESUMO E MÉTRICAS ---
+    # --- ABA 2: RESUMO E DASHBOARD ---
     with aba_dash:
         st.header("Métricas Globais")
-        
         if not df_vendas.empty and "Valor" in df_vendas.columns:
-            # Tratamento de valores para garantir cálculo numérico
             df_vendas["Valor"] = pd.to_numeric(df_vendas["Valor"], errors="coerce").fillna(0)
             
             total_vendido = df_vendas["Valor"].sum()
@@ -134,4 +117,4 @@ else:
         if not df_vendas.empty:
             st.dataframe(df_vendas, use_container_width=True)
         else:
-            st.info("Nenhum dado cadastrado para exibição.")
+            st.info("Nenhum registro encontrado na planilha.")
