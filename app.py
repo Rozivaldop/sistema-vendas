@@ -45,10 +45,12 @@ def obter_conexao():
 def carregar_dados():
   try:
     sheet = obter_conexao()
-    dados = sheet.get_all_records()
-    df = pd.DataFrame(dados)
-    if df.empty:
+    dados = sheet.get_all_values()
+    if not dados or len(dados) <= 1:
       return pd.DataFrame(columns=COLUNAS_ESPERADAS)
+
+    cabeçalho = [str(c).strip() for c in dados[0]]
+    df = pd.DataFrame(dados[1:], columns=cabeçalho)
     return df
   except Exception:
     return pd.DataFrame(columns=COLUNAS_ESPERADAS)
@@ -70,14 +72,22 @@ def parse_data_br(data_str):
 
 
 def safe_float(val, default=0.0):
-  """Converte valor para float de forma segura preservando decimais"""
+  """Converte qualquer formato (R$ 149,00, 149.00, etc) para float"""
   try:
-    if pd.isna(val) or val == "":
+    if pd.isna(val) or val == "" or val is None:
       return default
     if isinstance(val, (int, float)):
       return float(val)
 
     s = str(val).strip()
+
+    # Remove R$, espaços e letras
+    s = re.sub(r"[^\d.,-]", "", s)
+
+    if not s:
+      return default
+
+    # Converte padrão brasileiro para americano (1.250,50 -> 1250.50)
     if "," in s and "." in s:
       s = s.replace(".", "").replace(",", ".")
     elif "," in s:
@@ -89,19 +99,12 @@ def safe_float(val, default=0.0):
 
 
 def safe_int(val, default=1):
-  """Converte valor para inteiro evitando problemas com datas como 1/1/1900"""
+  """Converte valor para inteiro extraindo apenas os dígitos"""
   try:
-    if pd.isna(val) or val == "":
+    if pd.isna(val) or val == "" or val is None:
       return default
 
     s_val = str(val).strip()
-
-    # Se a própria célula virou data (ex: 01/01/1900 ou 1/1/1900), extrai o 1º dia como numero
-    if "/" in s_val:
-      partes = s_val.split("/")
-      if partes[0].isdigit():
-        return max(1, int(partes[0]))
-
     numeros = re.findall(r"\d+", s_val)
     if numeros:
       return max(1, int(numeros[0]))
@@ -113,7 +116,6 @@ def safe_int(val, default=1):
 def gerar_cronograma_recalculado(
     data_primeira, num_parcelas, valor_total, valor_pago
 ):
-  """Gera o cronograma recalculado com base no novo valor total e valor pago"""
   num_parcelas = max(1, safe_int(num_parcelas, 1))
   valor_total = safe_float(valor_total, 0.0)
   valor_pago = safe_float(valor_pago, 0.0)
@@ -163,7 +165,7 @@ def gerar_cronograma_recalculado(
   return pd.DataFrame(cronograma), saldo_devedor
 
 
-# --- SISTEMA DE LOGIN ---
+# --- LOGIN ---
 if "autenticado" not in st.session_state:
   st.session_state.autenticado = False
 
@@ -268,7 +270,7 @@ else:
         else:
           st.warning("Preencha o nome do cliente e do produto.")
 
-  # --- ABA 2: EDITAR / REGISTRAR PAGAMENTO ---
+  # --- ABA 2: EDITAR / EDITAR PAGAMENTO ---
   with aba_atualizar:
     st.header("Registrar Pagamento / Editar Venda")
     if not df_vendas.empty:
@@ -358,7 +360,6 @@ else:
             if cell:
               linha_sheets = cell.row
 
-              # Atualiza enviando como USER_ENTERED para formatar valores corretamente
               sheet.update_cell(linha_sheets, 5, float(novo_valor_total))
               sheet.update_cell(linha_sheets, 6, float(novo_valor_pago))
               sheet.update_cell(linha_sheets, 7, int(novas_parcelas))
@@ -401,17 +402,16 @@ else:
   with aba_dash:
     st.header("Análise Financeira e Contas a Receber")
     if not df_vendas.empty:
-      df_vendas["Valor Total"] = df_vendas["Valor Total"].apply(
-          lambda x: safe_float(x, 0.0)
+      df_vendas["Valor Total Calc"] = df_vendas["Valor Total"].apply(
+          safe_float
       )
-      df_vendas["Valor Pago"] = df_vendas["Valor Pago"].apply(
-          lambda x: safe_float(x, 0.0)
-      )
-      df_vendas["Parcelas"] = df_vendas["Parcelas"].apply(
+      df_vendas["Valor Pago Calc"] = df_vendas["Valor Pago"].apply(safe_float)
+      df_vendas["Parcelas Calc"] = df_vendas["Parcelas"].apply(
           lambda x: safe_int(x, 1)
       )
+
       df_vendas["Saldo Devedor"] = (
-          df_vendas["Valor Total"] - df_vendas["Valor Pago"]
+          df_vendas["Valor Total Calc"] - df_vendas["Valor Pago Calc"]
       ).clip(lower=0)
 
       df_vendas["Data_Parsed"] = df_vendas["Data"].apply(parse_data_br)
@@ -433,8 +433,8 @@ else:
       else:
         df_filtrado = df_vendas.copy()
 
-      total_geral = df_filtrado["Valor Total"].sum()
-      total_pago = df_filtrado["Valor Pago"].sum()
+      total_geral = df_filtrado["Valor Total Calc"].sum()
+      total_pago = df_filtrado["Valor Pago Calc"].sum()
       total_a_receber = df_filtrado["Saldo Devedor"].sum()
 
       col_m1, col_m2, col_m3 = st.columns(3)
@@ -444,8 +444,20 @@ else:
 
       st.divider()
       st.subheader(f"📋 Clientes com Pendência/Saldo Devedor ({mes_selecionado})")
-      df_pendentes = df_filtrado[df_filtrado["Saldo Devedor"] > 0]
+      df_pendentes = df_filtrado[df_filtrado["Saldo Devedor"] > 0].copy()
+
       if not df_pendentes.empty:
+        df_pendentes["Valor Total"] = df_pendentes["Valor Total Calc"].apply(
+            lambda x: f"R$ {x:.2f}"
+        )
+        df_pendentes["Valor Pago"] = df_pendentes["Valor Pago Calc"].apply(
+            lambda x: f"R$ {x:.2f}"
+        )
+        df_pendentes["Saldo Devedor"] = df_pendentes["Saldo Devedor"].apply(
+            lambda x: f"R$ {x:.2f}"
+        )
+        df_pendentes["Parcelas"] = df_pendentes["Parcelas Calc"]
+
         colunas_exibir = [
             c
             for c in [
@@ -475,13 +487,6 @@ else:
   with aba_historico:
     st.header("Todas as Vendas Registradas")
     if not df_vendas.empty:
-      df_vendas_clean = df_vendas.copy()
-      if "Parcelas" in df_vendas_clean.columns:
-        df_vendas_clean["Parcelas"] = df_vendas_clean["Parcelas"].apply(
-            lambda x: safe_int(x, 1)
-        )
-      st.dataframe(
-          df_vendas_clean, use_container_width=True, hide_index=True
-      )
+      st.dataframe(df_vendas, use_container_width=True, hide_index=True)
     else:
       st.info("Nenhum registro encontrado.")
