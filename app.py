@@ -308,56 +308,42 @@ else:
             value=float(val_total_atual),
             format="%.2f",
             step=1.0,
-            key="in_total",
+            key=f"total_{venda_id_alvo}",
         )
 
         st.info(f"💰 **Já Pago Anteriormente:** R$ {val_pago_atual:,.2f}")
 
-        # PAGAMENTO ADICIONAL (SOMA AUTOMÁTICA)
+        # PAGAMENTO DE HOJE
         valor_novo_pagamento = st.number_input(
-            "➕ Adicionar Novo Pagamento de Hoje (R$)",
+            "➕ Adicionar Pagamento de Hoje (R$)",
             min_value=0.0,
             value=0.0,
             format="%.2f",
             step=5.0,
-            key="in_novo_pagto",
-            help="Digite quanto o cliente está pagando agora. O sistema vai somar sozinho!",
+            key=f"novo_pagto_{venda_id_alvo}",
+            help="Digite apenas o valor do pagamento atual.",
         )
 
-        novo_valor_pago_calculado = min(
+        # SOMA AUTOMÁTICA
+        novo_valor_pago_final = min(
             val_pago_atual + valor_novo_pagamento, novo_valor_total
         )
 
-        with st.expander("🛠️ Ajustar Total Pago Acumulado Manualmente"):
-          novo_valor_pago_manual = st.number_input(
-              "Valor Acumulado Corrigido (R$)",
-              min_value=0.0,
-              value=float(novo_valor_pago_calculado),
-              format="%.2f",
-              step=1.0,
-              key="in_pago_manual",
-          )
-
-        novo_valor_pago_final = novo_valor_pago_manual
-
-        if valor_novo_pagamento > 0 or novo_valor_pago_final != val_pago_atual:
-          st.success(
-              f"Novo Total Pago será: **R$ {novo_valor_pago_final:,.2f}**"
-          )
+        st.success(f"Novo Total Pago será: **R$ {novo_valor_pago_final:,.2f}**")
 
         novas_parcelas = st.number_input(
             "Quantidade Total de Parcelas",
             min_value=1,
             value=int(parcelas_atual),
             step=1,
-            key="in_parc",
+            key=f"parc_{venda_id_alvo}",
         )
 
         nova_data_1 = st.date_input(
             "Data do 1º Vencimento",
             data_1_parsed,
             format="DD/MM/YYYY",
-            key="in_dt1",
+            key=f"dt1_{venda_id_alvo}",
         )
 
         saldo_restante_calc = novo_valor_total - novo_valor_pago_final
@@ -372,7 +358,7 @@ else:
             "Status do Pagamento",
             ["A Receber", "Parcial", "Pago"],
             index=["A Receber", "Parcial", "Pago"].index(status_sugerido),
-            key="in_status",
+            key=f"status_{venda_id_alvo}",
         )
 
         btn_atualizar = st.button(
@@ -396,7 +382,7 @@ else:
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
-                  f"Pagamento registrado com sucesso! Total pago acumulado: R$"
+                  f"Pagamento registrado com sucesso! Novo saldo pago: R$"
                   f" {novo_valor_pago_final:,.2f}"
               )
               st.rerun()
