@@ -42,7 +42,7 @@ def obter_conexao():
 
 
 def carregar_dados():
-  """Lê a planilha diretamente do Google Sheets sem cache"""
+  """Lê a planilha diretamente do Google Sheets"""
   try:
     sheet = obter_conexao()
     dados = sheet.get_all_values()
@@ -51,6 +51,12 @@ def carregar_dados():
 
     cabeçalho = [str(c).strip() for c in dados[0]]
     df = pd.DataFrame(dados[1:], columns=cabeçalho)
+
+    # Garante que todas as colunas esperadas existam
+    for col in COLUNAS_ESPERADAS:
+      if col not in df.columns:
+        df[col] = ""
+
     return df
   except Exception as e:
     st.error(f"Erro ao conectar com Google Sheets: {e}")
@@ -73,7 +79,7 @@ def parse_data_br(data_str):
 
 
 def safe_float(val, default=0.0):
-  """Suporta vírgula BR (72,90), ponto (72.90) e prefixo R$"""
+  """Trata vírgulas, pontos e textos vazios para float"""
   try:
     if pd.isna(val) or val == "" or val is None:
       return default
@@ -97,11 +103,10 @@ def safe_float(val, default=0.0):
 
 
 def safe_int(val, default=1):
-  """Converte quantidade de parcelas tratando decimais ex: 3,00 -> 3"""
+  """Converte a quantidade de parcelas"""
   try:
     if pd.isna(val) or val == "" or val is None:
       return default
-
     num_float = safe_float(val, float(default))
     return max(1, int(round(num_float)))
   except (ValueError, TypeError):
@@ -119,7 +124,7 @@ def gerar_cronograma_recalculado(
   saldo_devedor = max(0.0, valor_total - valor_pago)
   valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
 
-  # Quantas parcelas foram cobertas pelo valor total pago
+  # Quantas parcelas cheias foram amortizadas
   if valor_original_parcela > 0:
     parcelas_quitadas = int(valor_pago // valor_original_parcela)
   else:
@@ -130,7 +135,6 @@ def gerar_cronograma_recalculado(
 
   parcelas_restantes = num_parcelas - parcelas_quitadas
 
-  # O saldo devedor restante é dividido de forma igual entre as parcelas que faltam
   if parcelas_restantes > 0 and saldo_devedor > 0:
     novo_valor_parcela_pendente = saldo_devedor / parcelas_restantes
   else:
@@ -162,7 +166,6 @@ def gerar_cronograma_recalculado(
 
 
 def expandir_todas_parcelas(df_vendas):
-  """Expande todas as vendas em parcelas individuais com suas respectivas datas de vencimento"""
   lista_parcelas = []
 
   for _, row in df_vendas.iterrows():
@@ -194,7 +197,7 @@ def expandir_todas_parcelas(df_vendas):
   return pd.DataFrame(lista_parcelas)
 
 
-# --- AUTENTICAÇÃO E LOGIN ---
+# --- LOGIN ---
 if "autenticado" not in st.session_state:
   st.session_state.autenticado = False
 
@@ -211,22 +214,19 @@ if not st.session_state.autenticado:
       else:
         st.error("Usuário ou senha incorretos.")
 else:
-  # BARRA LATERAL
   st.sidebar.title("Opções")
-  if st.sidebar.button("🔄 Recarregar Dados do Sheets"):
-    st.cache_data.clear()
+  if st.sidebar.button("🔄 Recarregar Dados"):
     st.rerun()
 
   if st.sidebar.button("Sair / Logout"):
     st.session_state.autenticado = False
     st.rerun()
 
-  # CABEÇALHO PRINCIPAL
   col_t1, col_t2 = st.columns([3, 1])
   with col_t1:
     st.title("📊 Gestão de Vendas & Recebimentos")
   with col_t2:
-    if st.button("🔄 Sincronizar Agora", type="secondary"):
+    if st.button("🔄 Sincronizar", type="secondary"):
       st.rerun()
 
   df_vendas = carregar_dados()
@@ -290,9 +290,9 @@ else:
                 data_venda.strftime("%d/%m/%Y"),
                 cliente,
                 produto,
-                float(valor_total),
-                float(valor_pago_inicial),
-                int(parcelas),
+                str(float(valor_total)),
+                str(float(valor_pago_inicial)),
+                str(int(parcelas)),
                 data_primeira_parcela.strftime("%d/%m/%Y"),
                 status_inicial,
             ]
@@ -346,21 +346,17 @@ else:
         )
 
         st.info(
-            "💵 **Valor Pago Acumulado Anteriormente:** R$"
+            "💵 **Valor Pago Registrado Anteriormente:** R$"
             f" {val_pago_atual:,.2f}"
         )
 
         valor_novo_pagamento = st.number_input(
-            "➕ Valor Pago HOJE (Adicionar R$)",
+            "➕ Valor Pago HOJE (Adicionar ao total já pago)",
             min_value=0.0,
             value=0.0,
             format="%.2f",
             step=5.0,
             key=f"novo_pagto_{venda_id_alvo}",
-            help=(
-                "Digite apenas o valor recebido HOJE. Deixe 0,00 se quiser"
-                " apenas ver ou alterar dados sem registrar novo pagamento."
-            ),
         )
 
         ajustar_manual = st.checkbox(
@@ -385,13 +381,8 @@ else:
         if valor_novo_pagamento > 0 and not ajustar_manual:
           st.success(
               f"💡 Soma calculada: R$ {val_pago_atual:,.2f} + R$"
-              f" {valor_novo_pagamento:,.2f} = **Novo Total Pago Acumulado: R$"
+              f" {valor_novo_pagamento:,.2f} = **Novo Total Pago: R$"
               f" {novo_valor_pago_final:,.2f}**"
-          )
-        else:
-          st.caption(
-              f"📌 **Total Pago que será mantido:** R$"
-              f" {novo_valor_pago_final:,.2f}"
           )
 
         novas_parcelas = st.number_input(
@@ -431,13 +422,20 @@ else:
         if btn_atualizar:
           try:
             sheet = obter_conexao()
+
+            # Procura a linha correta pelo ID do registro
             cell = sheet.find(str(venda_id_alvo))
 
             if cell:
               linha_sheets = cell.row
 
-              sheet.update_cell(linha_sheets, 5, float(novo_valor_total))
-              sheet.update_cell(linha_sheets, 6, float(novo_valor_pago_final))
+              # Atualização na planilha Google Sheets (Colunas 5, 6, 7, 8, 9)
+              sheet.update_cell(
+                  linha_sheets, 5, str(round(float(novo_valor_total), 2))
+              )
+              sheet.update_cell(
+                  linha_sheets, 6, str(round(float(novo_valor_pago_final), 2))
+              )
               sheet.update_cell(linha_sheets, 7, int(novas_parcelas))
               sheet.update_cell(
                   linha_sheets, 8, nova_data_1.strftime("%d/%m/%Y")
@@ -445,7 +443,7 @@ else:
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
-                  f"✅ Sucesso! Novo Valor Total Pago registrado: R$"
+                  f"✅ Pagamento Registrado! Novo Total Pago: R$"
                   f" {novo_valor_pago_final:,.2f}"
               )
               st.rerun()
@@ -454,7 +452,7 @@ else:
                   f"Não foi possível localizar o ID {venda_id_alvo} na planilha."
               )
           except Exception as e:
-            st.error(f"Erro ao atualizar planilha: {e}")
+            st.error(f"Erro ao salvar na planilha: {e}")
 
       with col_edit2:
         st.subheader("🗓️ Cronograma Recalculado")
@@ -485,7 +483,7 @@ else:
     else:
       st.info("Nenhuma venda registrada para atualizar.")
 
-  # --- ABA 3: DASHBOARD & CONTAS A RECEBER POR MÊS DE VENCIMENTO ---
+  # --- ABA 3: DASHBOARD & CONTAS A RECEBER ---
   with aba_dash:
     st.header("Análise Financeira e Contas a Receber")
 
