@@ -339,6 +339,13 @@ else:
         dt_1_str = dados_venda.get("Data", "")
       data_1_parsed = parse_data_br(dt_1_str)
 
+      # --- CHAVE DO CAMPO DE PAGAMENTO HOJE ---
+      key_pagto_hoje = f"novo_pagto_{venda_id_alvo}"
+
+      # Garante inicialização com 0.0 na memória
+      if key_pagto_hoje not in st.session_state:
+        st.session_state[key_pagto_hoje] = 0.0
+
       col_edit1, col_edit2 = st.columns(2)
 
       with col_edit1:
@@ -361,10 +368,9 @@ else:
         valor_novo_pagamento = st.number_input(
             "➕ Valor Pago HOJE (Adicionar ao total já pago)",
             min_value=0.0,
-            value=0.0,
             format="%.2f",
             step=5.0,
-            key=f"novo_pagto_{venda_id_alvo}",
+            key=key_pagto_hoje,
         )
 
         ajustar_manual = st.checkbox(
@@ -447,8 +453,11 @@ else:
               )
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
+              # APÓS SALVAR, ZERA O CAMPO
+              st.session_state[key_pagto_hoje] = 0.0
+
               st.success(
-                  f"✅ Pagamento de R$ {valor_novo_pagamento:,.2f} Salvo com"
+                  f"✅ Pagamento de R$ {valor_novo_pagamento:,.2f} salvo com"
                   f" sucesso! Novo Total Pago: R$ {novo_valor_pago_final:,.2f}"
               )
               st.cache_data.clear()
@@ -532,13 +541,14 @@ else:
 
       st.divider()
 
-      st.subheader(
-          f"📋 Detalhamento de Parcelas ({mes_selecionado})"
-      )
+      st.subheader(f"📋 Detalhamento de Parcelas ({mes_selecionado})")
 
       tipo_filtro_situacao = st.radio(
           "Filtrar Situação das Parcelas:",
-          ["Apenas Pendentes (A Receber)", "Todas as Parcelas (Quitadas + Pendentes)"],
+          [
+              "Apenas Pendentes (A Receber)",
+              "Todas as Parcelas (Quitadas + Pendentes)",
+          ],
           horizontal=True,
       )
 
