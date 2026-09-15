@@ -119,20 +119,22 @@ def gerar_cronograma_recalculado(
   saldo_devedor = max(0.0, valor_total - valor_pago)
   valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
 
-  parcelas_quitadas = (
-      int(valor_pago // valor_original_parcela)
-      if valor_original_parcela > 0
-      else 0
-  )
-  if parcelas_quitadas >= num_parcelas:
+  # Quantas parcelas foram cobertas pelo valor total pago
+  if valor_original_parcela > 0:
+    parcelas_quitadas = int(valor_pago // valor_original_parcela)
+  else:
+    parcelas_quitadas = 0
+
+  if parcelas_quitadas >= num_parcelas or saldo_devedor == 0:
     parcelas_quitadas = num_parcelas
 
   parcelas_restantes = num_parcelas - parcelas_quitadas
 
+  # O saldo devedor restante é dividido de forma igual entre as parcelas que faltam
   if parcelas_restantes > 0 and saldo_devedor > 0:
-    novo_valor_parcela = saldo_devedor / parcelas_restantes
+    novo_valor_parcela_pendente = saldo_devedor / parcelas_restantes
   else:
-    novo_valor_parcela = 0.0
+    novo_valor_parcela_pendente = 0.0
 
   cronograma = []
 
@@ -143,12 +145,9 @@ def gerar_cronograma_recalculado(
     if i < parcelas_quitadas:
       st_parc = "✅ Quitada"
       val_parc = valor_original_parcela
-    elif saldo_devedor == 0:
-      st_parc = "✅ Quitada"
-      val_parc = 0.0
     else:
       st_parc = "⏳ Pendente"
-      val_parc = novo_valor_parcela
+      val_parc = novo_valor_parcela_pendente
 
     cronograma.append({
         "Nº Parcela": f"{i+1}/{num_parcelas}",
@@ -347,31 +346,31 @@ else:
         )
 
         st.info(
-            "💵 **Valor Pago Registrado Anteriormente:** R$"
+            "💵 **Valor Pago Acumulado Anteriormente:** R$"
             f" {val_pago_atual:,.2f}"
         )
 
         valor_novo_pagamento = st.number_input(
-            "➕ Registrar NOVO Pagamento (Somar ao que já foi pago)",
+            "➕ Valor Pago HOJE (Adicionar R$)",
             min_value=0.0,
             value=0.0,
             format="%.2f",
             step=5.0,
             key=f"novo_pagto_{venda_id_alvo}",
             help=(
-                "Digite o valor pago HOJE. Ele será somado ao valor já pago"
-                " anterior."
+                "Digite apenas o valor recebido HOJE. Deixe 0,00 se quiser"
+                " apenas ver ou alterar dados sem registrar novo pagamento."
             ),
         )
 
         ajustar_manual = st.checkbox(
-            "⚙️ Precisa corrigir o valor total pago manualmente?",
+            "⚙️ Precisa redefinir o valor total pago manualmente?",
             key=f"chk_{venda_id_alvo}",
         )
 
         if ajustar_manual:
           novo_valor_pago_final = st.number_input(
-              "Definir Valor Total Pago Acumulado (R$)",
+              "Definir Novo Valor Total Pago Acumulado (R$)",
               min_value=0.0,
               value=float(val_pago_atual),
               format="%.2f",
@@ -386,8 +385,13 @@ else:
         if valor_novo_pagamento > 0 and not ajustar_manual:
           st.success(
               f"💡 Soma calculada: R$ {val_pago_atual:,.2f} + R$"
-              f" {valor_novo_pagamento:,.2f} = **Novo Total Pago: R$"
+              f" {valor_novo_pagamento:,.2f} = **Novo Total Pago Acumulado: R$"
               f" {novo_valor_pago_final:,.2f}**"
+          )
+        else:
+          st.caption(
+              f"📌 **Total Pago que será mantido:** R$"
+              f" {novo_valor_pago_final:,.2f}"
           )
 
         novas_parcelas = st.number_input(
