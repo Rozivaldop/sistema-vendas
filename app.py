@@ -52,7 +52,6 @@ def carregar_dados():
     cabeçalho = [str(c).strip() for c in dados[0]]
     df = pd.DataFrame(dados[1:], columns=cabeçalho)
 
-    # Garante que todas as colunas esperadas existam
     for col in COLUNAS_ESPERADAS:
       if col not in df.columns:
         df[col] = ""
@@ -103,7 +102,7 @@ def safe_float(val, default=0.0):
 
 
 def safe_int(val, default=1):
-  """Converte a quantidade de parcelas"""
+  """Converte quantidade de parcelas"""
   try:
     if pd.isna(val) or val == "" or val is None:
       return default
@@ -124,7 +123,6 @@ def gerar_cronograma_recalculado(
   saldo_devedor = max(0.0, valor_total - valor_pago)
   valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
 
-  # Quantas parcelas cheias foram amortizadas
   if valor_original_parcela > 0:
     parcelas_quitadas = int(valor_pago // valor_original_parcela)
   else:
@@ -175,10 +173,13 @@ def expandir_todas_parcelas(df_vendas):
     val_total = safe_float(row.get("Valor Total", 0))
     val_pago = safe_float(row.get("Valor Pago", 0))
     num_parc = safe_int(row.get("Parcelas", 1), 1)
-    dt_1 = row.get("Data 1ª Parcela", row.get("Data", ""))
+
+    dt_1_raw = row.get("Data 1ª Parcela", "")
+    if not dt_1_raw or str(dt_1_raw).strip() == "":
+      dt_1_raw = row.get("Data", "")
 
     df_crono, _ = gerar_cronograma_recalculado(
-        dt_1, num_parc, val_total, val_pago
+        dt_1_raw, num_parc, val_total, val_pago
     )
 
     for _, p in df_crono.iterrows():
@@ -216,6 +217,7 @@ if not st.session_state.autenticado:
 else:
   st.sidebar.title("Opções")
   if st.sidebar.button("🔄 Recarregar Dados"):
+    st.cache_data.clear()
     st.rerun()
 
   if st.sidebar.button("Sair / Logout"):
@@ -227,6 +229,7 @@ else:
     st.title("📊 Gestão de Vendas & Recebimentos")
   with col_t2:
     if st.button("🔄 Sincronizar", type="secondary"):
+      st.cache_data.clear()
       st.rerun()
 
   df_vendas = carregar_dados()
@@ -300,6 +303,7 @@ else:
             st.success(
                 f"Venda para **{cliente}** salva com sucesso! (ID: {venda_id})"
             )
+            st.cache_data.clear()
             st.rerun()
           except Exception as e:
             st.error(f"Erro ao salvar na planilha: {e}")
@@ -329,7 +333,11 @@ else:
       val_total_atual = safe_float(dados_venda.get("Valor Total", 0))
       val_pago_atual = safe_float(dados_venda.get("Valor Pago", 0))
       parcelas_atual = safe_int(dados_venda.get("Parcelas", 1), 1)
-      data_1_parsed = parse_data_br(dados_venda.get("Data 1ª Parcela", ""))
+
+      dt_1_str = dados_venda.get("Data 1ª Parcela", "")
+      if not dt_1_str or str(dt_1_str).strip() == "":
+        dt_1_str = dados_venda.get("Data", "")
+      data_1_parsed = parse_data_br(dt_1_str)
 
       col_edit1, col_edit2 = st.columns(2)
 
@@ -422,14 +430,11 @@ else:
         if btn_atualizar:
           try:
             sheet = obter_conexao()
-
-            # Procura a linha correta pelo ID do registro
             cell = sheet.find(str(venda_id_alvo))
 
             if cell:
               linha_sheets = cell.row
 
-              # Atualização na planilha Google Sheets (Colunas 5, 6, 7, 8, 9)
               sheet.update_cell(
                   linha_sheets, 5, str(round(float(novo_valor_total), 2))
               )
@@ -443,9 +448,10 @@ else:
               sheet.update_cell(linha_sheets, 9, str(novo_status))
 
               st.success(
-                  f"✅ Pagamento Registrado! Novo Total Pago: R$"
-                  f" {novo_valor_pago_final:,.2f}"
+                  f"✅ Pagamento de R$ {valor_novo_pagamento:,.2f} Salvo com"
+                  f" sucesso! Novo Total Pago: R$ {novo_valor_pago_final:,.2f}"
               )
+              st.cache_data.clear()
               st.rerun()
             else:
               st.error(
