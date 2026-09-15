@@ -70,18 +70,21 @@ def parse_data_br(data_str):
 
 
 def safe_float(val, default=0.0):
-  """Converte valor para float de forma segura"""
+  """Converte valor para float de forma segura preservando decimais"""
   try:
     if pd.isna(val) or val == "":
       return default
-    # Trata valores como "719,00" ou 719.00
-    val_str = str(val).replace(".", "").replace(",", ".")
-    # Se tinha múltiplos pontos de milhar, mantém apenas a última conversão decimal
-    if str(val).count(",") == 1 and str(val).count(".") == 0:
-      val_str = str(val).replace(",", ".")
-    elif str(val).count(".") == 1 and str(val).count(",") == 0:
-      val_str = str(val)
-    return float(val_str)
+    if isinstance(val, (int, float)):
+      return float(val)
+
+    s = str(val).strip()
+    # Se contiver virgula e ponto (ex: 1.200,50), remove ponto e troca virgula por ponto
+    if "," in s and "." in s:
+      s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+      s = s.replace(",", ".")
+
+    return float(s)
   except (ValueError, TypeError):
     return default
 
@@ -273,6 +276,7 @@ else:
       )
       idx_selecionado = opcoes_vendas.index(venda_selecionada)
       dados_venda = df_vendas.iloc[idx_selecionado]
+      venda_id_alvo = str(dados_venda.get("ID", ""))
 
       val_total_atual = safe_float(dados_venda.get("Valor Total", 0))
       val_pago_atual = safe_float(dados_venda.get("Valor Pago", 0))
@@ -282,60 +286,69 @@ else:
       col_edit1, col_edit2 = st.columns(2)
 
       with col_edit1:
-        with st.form("form_atualizar_venda"):
-          st.subheader(f"Cliente: {dados_venda.get('Cliente', '')}")
+        st.subheader(f"Cliente: {dados_venda.get('Cliente', '')}")
 
-          novo_valor_total = st.number_input(
-              "Valor Total da Venda (R$)",
-              min_value=0.0,
-              value=float(val_total_atual),
-              format="%.2f",
-              step=1.0,
-          )
+        novo_valor_total = st.number_input(
+            "Valor Total da Venda (R$)",
+            min_value=0.0,
+            value=float(val_total_atual),
+            format="%.2f",
+            step=1.0,
+            key="in_total",
+        )
 
-          novo_valor_pago = st.number_input(
-              "Valor ACUMULADO Já Pago pelo Cliente (R$)",
-              min_value=0.0,
-              value=min(float(val_pago_atual), float(novo_valor_total)),
-              format="%.2f",
-              step=1.0,
-          )
+        novo_valor_pago = st.number_input(
+            "Valor ACUMULADO Já Pago pelo Cliente (R$)",
+            min_value=0.0,
+            value=min(float(val_pago_atual), float(novo_valor_total)),
+            format="%.2f",
+            step=1.0,
+            key="in_pago",
+        )
 
-          novas_parcelas = st.number_input(
-              "Quantidade Total de Parcelas",
-              min_value=1,
-              value=int(parcelas_atual),
-              step=1,
-          )
+        novas_parcelas = st.number_input(
+            "Quantidade Total de Parcelas",
+            min_value=1,
+            value=int(parcelas_atual),
+            step=1,
+            key="in_parc",
+        )
 
-          nova_data_1 = st.date_input(
-              "Data do 1º Vencimento", data_1_parsed, format="DD/MM/YYYY"
-          )
+        nova_data_1 = st.date_input(
+            "Data do 1º Vencimento",
+            data_1_parsed,
+            format="DD/MM/YYYY",
+            key="in_dt1",
+        )
 
-          saldo_restante_calc = novo_valor_total - novo_valor_pago
-          if saldo_restante_calc <= 0 and novo_valor_total > 0:
-            status_sugerido = "Pago"
-          elif novo_valor_pago > 0:
-            status_sugerido = "Parcial"
-          else:
-            status_sugerido = "A Receber"
+        saldo_restante_calc = novo_valor_total - novo_valor_pago
+        if saldo_restante_calc <= 0 and novo_valor_total > 0:
+          status_sugerido = "Pago"
+        elif novo_valor_pago > 0:
+          status_sugerido = "Parcial"
+        else:
+          status_sugerido = "A Receber"
 
-          novo_status = st.selectbox(
-              "Status do Pagamento",
-              ["A Receber", "Parcial", "Pago"],
-              index=["A Receber", "Parcial", "Pago"].index(status_sugerido),
-          )
+        novo_status = st.selectbox(
+            "Status do Pagamento",
+            ["A Receber", "Parcial", "Pago"],
+            index=["A Receber", "Parcial", "Pago"].index(status_sugerido),
+            key="in_status",
+        )
 
-          btn_atualizar = st.form_submit_button(
-              "Salvar Alterações e Recalcular", type="primary"
-          )
+        btn_atualizar = st.button(
+            "Salvar Alterações e Recalcular", type="primary"
+        )
 
-          if btn_atualizar:
-            try:
-              sheet = obter_conexao()
-              linha_sheets = idx_selecionado + 2
+        if btn_atualizar:
+          try:
+            sheet = obter_conexao()
+            cell = sheet.find(str(venda_id_alvo))
 
-              # Atualiza explicitamente cada coluna na planilha do Google
+            if cell:
+              linha_sheets = cell.row
+
+              # Atualiza a linha exata encontrada pelo ID
               sheet.update_cell(
                   linha_sheets, 5, float(novo_valor_total)
               )  # E: Valor Total
@@ -352,24 +365,32 @@ else:
                   linha_sheets, 9, str(novo_status)
               )  # I: Status
 
-              st.success("Venda atualizada com sucesso na planilha!")
+              st.success(
+                  f"Venda {venda_id_alvo} atualizada com sucesso para R$"
+                  f" {novo_valor_total:.2f}!"
+              )
               st.rerun()
-            except Exception as e:
-              st.error(f"Erro ao atualizar planilha: {e}")
+            else:
+              st.error(
+                  f"Não foi possível localizar o ID {venda_id_alvo} na planilha."
+              )
+          except Exception as e:
+            st.error(f"Erro ao atualizar planilha: {e}")
 
       with col_edit2:
         st.subheader("🗓️ Cronograma Atualizado")
 
-        saldo_div = max(0.0, val_total_atual - val_pago_atual)
+        # Exibe as métricas com base no que você está alterando no formulário em tempo real
+        saldo_div_prev = max(0.0, novo_valor_total - novo_valor_pago)
         c_m1, c_m2 = st.columns(2)
-        c_m1.metric("Total Pago Até Agora", f"R$ {val_pago_atual:,.2f}")
-        c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div:,.2f}")
+        c_m1.metric("Total Pago Até Agora", f"R$ {novo_valor_pago:,.2f}")
+        c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div_prev:,.2f}")
 
-        df_cronograma, _ = gerar_cronograma_recalculado(
-            data_1_parsed, parcelas_atual, val_total_atual, val_pago_atual
+        df_cronograma_prev, _ = gerar_cronograma_recalculado(
+            nova_data_1, novas_parcelas, novo_valor_total, novo_valor_pago
         )
         st.dataframe(
-            df_cronograma, use_container_width=True, hide_index=True
+            df_cronograma_prev, use_container_width=True, hide_index=True
         )
 
     else:
