@@ -17,6 +17,7 @@ COLUNAS_ESPERADAS = [
     "Cliente",
     "Produto",
     "Valor Total",
+    "Valor Pago",
     "Parcelas",
     "Data 1ª Parcela",
     "Status",
@@ -53,7 +54,7 @@ def carregar_dados():
 
 
 def parse_data_br(data_str):
-  """Converte strings de data em objeto date, testando múltiplos formatos"""
+  """Converte strings de data em objeto date"""
   if isinstance(data_str, datetime):
     return data_str.date()
   if not isinstance(data_str, str) or not data_str.strip():
@@ -67,23 +68,53 @@ def parse_data_br(data_str):
   return datetime.now().date()
 
 
-def gerar_cronograma_parcelas(data_primeira, num_parcelas, valor_total):
-  """Gera a lista detalhada com datas de vencimento no formato BR"""
+def gerar_cronograma_recalculado(
+    data_primeira, num_parcelas, valor_total, valor_pago
+):
+  """Gera o cronograma mostrando parcelas pagas e recalculando o valor das parcelas restantes."""
   if not num_parcelas or num_parcelas < 1:
     num_parcelas = 1
 
   data_base = parse_data_br(data_primeira)
-  valor_parcela = valor_total / num_parcelas
+  saldo_devedor = max(0.0, valor_total - valor_pago)
+  valor_original_parcela = valor_total / num_parcelas
+
+  # Descobrir quantas parcelas teóricas o pagamento atual já cobriu integralmente
+  parcelas_quitadas = int(valor_pago // valor_original_parcela)
+  if parcelas_quitadas >= num_parcelas:
+    parcelas_quitadas = num_parcelas
+
+  parcelas_restantes = num_parcelas - parcelas_quitadas
+
+  if parcelas_restantes > 0 and saldo_devedor > 0:
+    novo_valor_parcela = saldo_devedor / parcelas_restantes
+  else:
+    novo_valor_parcela = 0.0
+
   cronograma = []
 
   for i in range(num_parcelas):
     data_venc = data_base + relativedelta(months=i)
+    data_str = data_venc.strftime("%d/%m/%Y")
+
+    if i < parcelas_quitadas:
+      st_parc = "✅ Quitada"
+      val_parc = valor_original_parcela
+    elif saldo_devedor == 0:
+      st_parc = "✅ Quitada"
+      val_parc = 0.0
+    else:
+      st_parc = "⏳ Pendente"
+      val_parc = novo_valor_parcela
+
     cronograma.append({
         "Nº Parcela": f"{i+1}/{num_parcelas}",
-        "Data Vencimento": data_venc.strftime("%d/%m/%Y"),
-        "Valor Parcela (R$)": f"{valor_parcela:.2f}",
+        "Vencimento": data_str,
+        "Valor da Parcela (R$)": f"{val_parc:.2f}",
+        "Situação": st_parc,
     })
-  return pd.DataFrame(cronograma)
+
+  return pd.DataFrame(cronograma), saldo_devedor
 
 
 # --- SISTEMA DE LOGIN ---
@@ -113,7 +144,7 @@ else:
 
   aba_cadastro, aba_atualizar, aba_dash, aba_historico = st.tabs([
       "➕ Cadastrar Venda",
-      "🔄 Baixar / Editar Venda",
+      "🔄 Registrar Pagamento / Editar",
       "📈 Dashboard & Filtros",
       "📋 Histórico Completo",
   ])
@@ -129,20 +160,25 @@ else:
         )
         cliente = st.text_input("Nome do Cliente")
         produto = st.text_input("Produto / Serviço Vendido")
-        valor = st.number_input(
+        valor_total = st.number_input(
             "Valor Total (R$)", min_value=0.0, format="%.2f"
         )
 
       with col_b:
+        valor_pago_inicial = st.number_input(
+            "Valor Já Pago na Entrada (R$)",
+            min_value=0.0,
+            value=0.0,
+            format="%.2f",
+        )
         parcelas = st.number_input(
-            "Quantidade de Parcelas", min_value=1, value=1, step=1
+            "Quantidade Total de Parcelas", min_value=1, value=1, step=1
         )
         data_primeira_parcela = st.date_input(
             "Data do 1º Vencimento / Parcela",
             datetime.now(),
             format="DD/MM/YYYY",
         )
-        status = st.selectbox("Status Inicial", ["A Receber", "Pago"])
 
       submeter = st.form_submit_button("Salvar Venda", type="primary")
 
@@ -151,15 +187,28 @@ else:
           try:
             sheet = obter_conexao()
             venda_id = str(uuid.uuid4())[:8]
+
+            # Define status automático com base no valor pago
+            if (
+                valor_pago_inicial >= valor_total
+                and valor_total > 0
+            ):
+              status_inicial = "Pago"
+            elif valor_pago_inicial > 0:
+              status_inicial = "Parcial"
+            else:
+              status_inicial = "A Receber"
+
             nova_linha = [
                 venda_id,
                 data_venda.strftime("%d/%m/%Y"),
                 cliente,
                 produto,
-                float(valor),
+                float(valor_total),
+                float(valor_pago_inicial),
                 int(parcelas),
                 data_primeira_parcela.strftime("%d/%m/%Y"),
-                status,
+                status_inicial,
             ]
             sheet.append_row(nova_linha)
             st.success(
@@ -171,54 +220,78 @@ else:
         else:
           st.warning("Preencha o nome do cliente e do produto.")
 
-  # --- ABA 2: EDITAR / DAR BAIXA ---
+  # --- ABA 2: EDITAR / REGISTRAR PAGAMENTO ---
   with aba_atualizar:
-    st.header("Atualizar Pagamento ou Dados da Venda")
+    st.header("Registrar Pagamento / Abater Saldo")
     if not df_vendas.empty:
       opcoes_vendas = df_vendas.apply(
           lambda row: (
-              f"ID: {row['ID']} | {row['Cliente']} - R$"
-              f" {row['Valor Total']} ({row['Status']})"
+              f"ID: {row['ID']} | {row['Cliente']} - Total: R$"
+              f" {row['Valor Total']} | Pago: R$"
+              f" {row.get('Valor Pago', 0)} ({row['Status']})"
           ),
           axis=1,
       ).tolist()
 
       venda_selecionada = st.selectbox(
-          "Selecione a venda para atualizar", opcoes_vendas
+          "Selecione a venda para gerenciar", opcoes_vendas
       )
       idx_selecionado = opcoes_vendas.index(venda_selecionada)
       dados_venda = df_vendas.iloc[idx_selecionado]
 
+      val_total_atual = float(dados_venda.get("Valor Total", 0))
+      val_pago_atual = float(dados_venda.get("Valor Pago", 0))
+      parcelas_atual = int(dados_venda.get("Parcelas", 1))
       data_1_parsed = parse_data_br(dados_venda.get("Data 1ª Parcela", ""))
 
       col_edit1, col_edit2 = st.columns(2)
 
       with col_edit1:
         with st.form("form_atualizar_venda"):
-          st.subheader(f"Editando Venda ID: {dados_venda['ID']}")
+          st.subheader(f"Cliente: {dados_venda['Cliente']}")
 
-          novo_status = st.selectbox(
-              "Status do Pagamento",
-              ["A Receber", "Pago"],
-              index=0 if dados_venda["Status"] == "A Receber" else 1,
-          )
-          novo_valor = st.number_input(
-              "Valor Total (R$)",
+          novo_valor_total = st.number_input(
+              "Valor Total da Venda (R$)",
               min_value=0.0,
-              value=float(dados_venda["Valor Total"]),
+              value=val_total_atual,
               format="%.2f",
           )
+
+          novo_valor_pago = st.number_input(
+              "Valor ACUMULADO Já Pago pelo Cliente (R$)",
+              min_value=0.0,
+              max_value=float(novo_valor_total),
+              value=min(val_pago_atual, novo_valor_total),
+              format="%.2f",
+              help="Exemplo: Se a dívida era 149,00 e ele já pagou 50,00, coloque 50,00 aqui.",
+          )
+
           novas_parcelas = st.number_input(
-              "Nº Parcelas",
+              "Quantidade Total de Parcelas",
               min_value=1,
-              value=int(dados_venda.get("Parcelas", 1)),
+              value=parcelas_atual,
           )
           nova_data_1 = st.date_input(
               "Data do 1º Vencimento", data_1_parsed, format="DD/MM/YYYY"
           )
 
+          # Cálculo automático do status
+          saldo_restante_calc = novo_valor_total - novo_valor_pago
+          if saldo_restante_calc <= 0 and novo_valor_total > 0:
+            status_sugerido = "Pago"
+          elif novo_valor_pago > 0:
+            status_sugerido = "Parcial"
+          else:
+            status_sugerido = "A Receber"
+
+          novo_status = st.selectbox(
+              "Status do Pagamento",
+              ["A Receber", "Parcial", "Pago"],
+              index=["A Receber", "Parcial", "Pago"].index(status_sugerido),
+          )
+
           btn_atualizar = st.form_submit_button(
-              "Salvar Alterações", type="primary"
+              "Salvar e Recalcular Parcelas", type="primary"
           )
 
           if btn_atualizar:
@@ -226,25 +299,35 @@ else:
               sheet = obter_conexao()
               linha_sheets = idx_selecionado + 2
 
-              sheet.update_cell(linha_sheets, 5, novo_valor)  # Valor Total
-              sheet.update_cell(linha_sheets, 6, novas_parcelas)  # Parcelas
+              sheet.update_cell(linha_sheets, 5, novo_valor_total)  # E: Total
               sheet.update_cell(
-                  linha_sheets, 7, nova_data_1.strftime("%d/%m/%Y")
-              )  # Data 1ª Parcela
-              sheet.update_cell(linha_sheets, 8, novo_status)  # Status
+                  linha_sheets, 6, novo_valor_pago
+              )  # F: Valor Pago
+              sheet.update_cell(
+                  linha_sheets, 7, novas_parcelas
+              )  # G: Parcelas
+              sheet.update_cell(
+                  linha_sheets, 8, nova_data_1.strftime("%d/%m/%Y")
+              )  # H: Data 1ª Parc
+              sheet.update_cell(linha_sheets, 9, novo_status)  # I: Status
 
-              st.success("Venda atualizada com sucesso!")
+              st.success("Pagamento registrado e parcelas recalculadas!")
               st.rerun()
             except Exception as e:
               st.error(f"Erro ao atualizar planilha: {e}")
 
       with col_edit2:
-        st.subheader("🗓️ Cronograma Calculado das Parcelas")
-        st.caption("Visão detalhada de vencimentos e valores:")
-        df_cronograma = gerar_cronograma_parcelas(
-            nova_data_1 if "nova_data_1" in locals() else data_1_parsed,
-            int(dados_venda.get("Parcelas", 1)),
-            float(dados_venda["Valor Total"]),
+        st.subheader("🗓️ Cronograma Atualizado das Parcelas")
+
+        # Exibir Métricas Rápidas
+        saldo_div = max(0.0, val_total_atual - val_pago_atual)
+        c_m1, c_m2 = st.columns(2)
+        c_m1.metric("Total Pago Até Agora", f"R$ {val_pago_atual:,.2f}")
+        c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div:,.2f}")
+
+        st.caption("Veja o recalculo das parcelas restantes:")
+        df_cronograma, _ = gerar_cronograma_recalculado(
+            data_1_parsed, parcelas_atual, val_total_atual, val_pago_atual
         )
         st.dataframe(
             df_cronograma, use_container_width=True, hide_index=True
@@ -255,13 +338,18 @@ else:
 
   # --- ABA 3: DASHBOARD & FILTROS ---
   with aba_dash:
-    st.header("Análise Financeira e Filtro por Mês")
+    st.header("Análise Financeira e Contas a Receber")
     if not df_vendas.empty and "Valor Total" in df_vendas.columns:
       df_vendas["Valor Total"] = (
           pd.to_numeric(df_vendas["Valor Total"], errors="coerce").fillna(0)
       )
+      df_vendas["Valor Pago"] = (
+          pd.to_numeric(df_vendas["Valor Pago"], errors="coerce").fillna(0)
+      )
+      df_vendas["Saldo Devedor"] = (
+          df_vendas["Valor Total"] - df_vendas["Valor Pago"]
+      ).clip(lower=0)
 
-      # Converte datas gravadas em BR ou ISO para datetime
       df_vendas["Data_Parsed"] = df_vendas["Data"].apply(parse_data_br)
       df_vendas["Ano_Mes"] = df_vendas["Data_Parsed"].apply(
           lambda d: d.strftime("%m/%Y")
@@ -282,21 +370,17 @@ else:
         df_filtrado = df_vendas.copy()
 
       total_geral = df_filtrado["Valor Total"].sum()
-      total_pago = df_filtrado[df_filtrado["Status"] == "Pago"][
-          "Valor Total"
-      ].sum()
-      total_a_receber = df_filtrado[df_filtrado["Status"] == "A Receber"][
-          "Valor Total"
-      ].sum()
+      total_pago = df_filtrado["Valor Pago"].sum()
+      total_a_receber = df_filtrado["Saldo Devedor"].sum()
 
       col_m1, col_m2, col_m3 = st.columns(3)
-      col_m1.metric("Faturamento Registrado", f"R$ {total_geral:,.2f}")
-      col_m2.metric("Total Já Recebido", f"R$ {total_pago:,.2f}")
-      col_m3.metric("📌 Contas A RECEBER", f"R$ {total_a_receber:,.2f}")
+      col_m1.metric("Faturamento Total Vendido", f"R$ {total_geral:,.2f}")
+      col_m2.metric("Total Efetivamente Recebido", f"R$ {total_pago:,.2f}")
+      col_m3.metric("📌 Saldo Pendente A RECEBER", f"R$ {total_a_receber:,.2f}")
 
       st.divider()
-      st.subheader(f"📋 Vendas com Pendências ({mes_selecionado})")
-      df_pendentes = df_filtrado[df_filtrado["Status"] == "A Receber"]
+      st.subheader(f"📋 Clientes com Pendência/Saldo Devedor ({mes_selecionado})")
+      df_pendentes = df_filtrado[df_filtrado["Saldo Devedor"] > 0]
       if not df_pendentes.empty:
         st.dataframe(
             df_pendentes[[
@@ -305,14 +389,16 @@ else:
                 "Cliente",
                 "Produto",
                 "Valor Total",
+                "Valor Pago",
+                "Saldo Devedor",
                 "Parcelas",
-                "Data 1ª Parcela",
+                "Status",
             ]],
             use_container_width=True,
             hide_index=True,
         )
       else:
-        st.success("Não há pendências de pagamento para este período!")
+        st.success("Nenhuma pendência de pagamento encontrada!")
     else:
       st.info("Nenhuma venda cadastrada ainda.")
 
