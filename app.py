@@ -135,18 +135,19 @@ def limpar_telefone(tel_str):
 
 
 def gerar_link_whatsapp(telefone, cliente, produto, num_parcela, valor, vencimento):
-    """Gera URL com mensagem personalizada para o WhatsApp"""
+    """Gera URL com mensagem personalizada e amigável para o WhatsApp"""
     num_limpo = limpar_telefone(telefone)
     if not num_limpo:
         return None
 
     msg = (
-        f"Olá, *{cliente}*! Tudo bem?\n\n"
-        f"Passando para lembrar referente ao pagamento da parcela *{num_parcela}* "
-        f"do produto *{produto}*.\n"
-        f"💵 *Valor:* R$ {valor:,.2f}\n"
+        f"Olá, *{cliente}*! 👋 Espero que esteja tendo um ótimo dia!\n\n"
+        f"Estou passando para organizar os pagamentos e enviar o lembrete da parcela *{num_parcela}* "
+        f"do item *{produto}*.\n\n"
+        f"💰 *Valor:* R$ {valor:,.2f}\n"
         f"📅 *Vencimento:* {vencimento}\n\n"
-        f"Qualquer dúvida estou à disposição!"
+        f"Se já tiver efetuado o pagamento, por favor desconsidere esta mensagem. "
+        f"Caso precise da chave PIX ou tenha qualquer dúvida, me avise por aqui! 😊"
     )
 
     msg_encoded = urllib.parse.quote(msg)
