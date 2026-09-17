@@ -1,5 +1,6 @@
 import json
 import re
+import urllib.parse
 import uuid
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -19,6 +20,7 @@ if "versao_pagto" not in st.session_state:
 COLUNAS_ESPERADAS = [
     "ID",
     "Data",
+    "Telefone",
     "Cliente",
     "Produto",
     "Valor Total",
@@ -53,26 +55,18 @@ def carregar_dados():
         if not dados or len(dados) <= 1:
             return pd.DataFrame(columns=COLUNAS_ESPERADAS)
 
-        # 1. Trata os cabeçalhos limpando espaços
         cabeçalho = [str(c).strip() for c in dados[0]]
-
-        # 2. Cria o DataFrame
         df = pd.DataFrame(dados[1:], columns=cabeçalho)
 
-        # 3. Remove colunas que tenham nome vazio ("")
+        # Trata colunas vazias e duplicadas
         df = df.loc[:, df.columns != ""]
-
-        # 4. Remove colunas com nomes duplicados, se houver
         df = df.loc[:, ~df.columns.duplicated()]
 
-        # 5. Garante que todas as colunas esperadas existam no DataFrame
         for col in COLUNAS_ESPERADAS:
             if col not in df.columns:
                 df[col] = ""
 
-        # 6. Reordena para manter a ordem correta das colunas esperadas
         df = df[COLUNAS_ESPERADAS]
-
         return df
     except Exception as e:
         st.error(f"Erro ao conectar com Google Sheets: {e}")
@@ -80,7 +74,6 @@ def carregar_dados():
 
 
 def parse_data_br(data_str):
-    """Converte strings de data em objeto date"""
     if isinstance(data_str, datetime):
         return data_str.date()
     if not isinstance(data_str, str) or not data_str.strip():
@@ -95,7 +88,6 @@ def parse_data_br(data_str):
 
 
 def safe_float(val, default=0.0):
-    """Trata vírgulas, pontos e textos vazios para float"""
     try:
         if pd.isna(val) or val == "" or val is None:
             return default
@@ -119,7 +111,6 @@ def safe_float(val, default=0.0):
 
 
 def safe_int(val, default=1):
-    """Converte quantidade de parcelas"""
     try:
         if pd.isna(val) or val == "" or val is None:
             return default
@@ -127,6 +118,35 @@ def safe_int(val, default=1):
         return max(1, int(round(num_float)))
     except (ValueError, TypeError):
         return default
+
+
+def limpar_telefone(tel_str):
+    """Remove caracteres não numéricos do telefone"""
+    if not tel_str or pd.isna(tel_str):
+        return ""
+    num = re.sub(r"\D", "", str(tel_str))
+    if len(num) >= 10 and not num.startswith("55"):
+        num = "55" + num
+    return num
+
+
+def gerar_link_whatsapp(telefone, cliente, produto, num_parcela, valor, vencimento):
+    """Gera URL com mensagem personalizada para o WhatsApp"""
+    num_limpo = limpar_telefone(telefone)
+    if not num_limpo:
+        return ""
+
+    msg = (
+        f"Olá, *{cliente}*! tudo bem?\n\n"
+        f"Passando para lembrar referente ao pagamento da parcela *{num_parcela}* "
+        f"do produto *{produto}*.\n"
+        f"💵 *Valor:* R$ {valor:,.2f}\n"
+        f"📅 *Vencimento:* {vencimento}\n\n"
+        f"Qualquer dúvida estou à disposição!"
+    )
+    
+    msg_encoded = urllib.parse.quote(msg)
+    return f"https://wa.me/{num_limpo}?text={msg_encoded}"
 
 
 def gerar_cronograma_recalculado(
@@ -186,6 +206,7 @@ def expandir_todas_parcelas(df_vendas):
     for _, row in df_vendas.iterrows():
         venda_id = row.get("ID", "")
         cliente = row.get("Cliente", "")
+        telefone = row.get("Telefone", "")
         produto = row.get("Produto", "")
         val_total = safe_float(row.get("Valor Total", 0))
         val_pago = safe_float(row.get("Valor Pago", 0))
@@ -200,9 +221,14 @@ def expandir_todas_parcelas(df_vendas):
         )
 
         for _, p in df_crono.iterrows():
+            link_wa = gerar_link_whatsapp(
+                telefone, cliente, produto, p["Nº Parcela"], p["Valor Parcela (R$)"], p["Vencimento"]
+            )
+            
             lista_parcelas.append({
                 "ID Venda": venda_id,
                 "Cliente": cliente,
+                "Telefone": telefone,
                 "Produto": produto,
                 "Nº Parcela": p["Nº Parcela"],
                 "Vencimento": p["Vencimento"],
@@ -210,6 +236,7 @@ def expandir_todas_parcelas(df_vendas):
                 "Ano_Mes": p["Ano_Mes"],
                 "Valor Parcela": p["Valor Parcela (R$)"],
                 "Situação": p["Situação"],
+                "Cobrar WhatsApp": link_wa,
             })
 
     return pd.DataFrame(lista_parcelas)
@@ -270,6 +297,7 @@ else:
                     "Data da Venda", datetime.now(), format="DD/MM/YYYY"
                 )
                 cliente = st.text_input("Nome do Cliente")
+                telefone = st.text_input("Telefone / WhatsApp (ex: 11999998888)")
                 produto = st.text_input("Produto / Serviço Vendido")
                 valor_total = st.number_input(
                     "Valor Total (R$)", min_value=0.0, format="%.2f", step=1.0
@@ -310,6 +338,7 @@ else:
                         nova_linha = [
                             venda_id,
                             data_venda.strftime("%d/%m/%Y"),
+                            telefone,
                             cliente,
                             produto,
                             str(float(valor_total)),
@@ -358,7 +387,6 @@ else:
                 dt_1_str = dados_venda.get("Data", "")
             data_1_parsed = parse_data_br(dt_1_str)
 
-            # CHAVE DINÂMICA QUE FORÇA O ZERAMENTO DO CAMPO
             key_pagto_hoje = (
                 f"novo_pagto_{venda_id_alvo}_{st.session_state.versao_pagto}"
             )
@@ -459,19 +487,19 @@ else:
                         if cell:
                             linha_sheets = cell.row
 
+                            # Atualiza as células conforme nova ordem das colunas
                             sheet.update_cell(
-                                linha_sheets, 5, str(round(float(novo_valor_total), 2))
+                                linha_sheets, 6, str(round(float(novo_valor_total), 2))
                             )
                             sheet.update_cell(
-                                linha_sheets, 6, str(round(float(novo_valor_pago_final), 2))
+                                linha_sheets, 7, str(round(float(novo_valor_pago_final), 2))
                             )
-                            sheet.update_cell(linha_sheets, 7, int(novas_parcelas))
+                            sheet.update_cell(linha_sheets, 8, int(novas_parcelas))
                             sheet.update_cell(
-                                linha_sheets, 8, nova_data_1.strftime("%d/%m/%Y")
+                                linha_sheets, 9, nova_data_1.strftime("%d/%m/%Y")
                             )
-                            sheet.update_cell(linha_sheets, 9, str(novo_status))
+                            sheet.update_cell(linha_sheets, 10, str(novo_status))
 
-                            # Incrementar a chave força a recriação do componente com 0.0
                             st.session_state.versao_pagto += 1
 
                             st.success(
@@ -585,15 +613,25 @@ else:
                     "Vencimento",
                     "Valor Parcela",
                     "Situação",
-                    "ID Venda",
+                    "Cobrar WhatsApp",
                 ]].copy()
+                
                 df_exibir_tabela["Valor Parcela (R$)"] = df_exibir_tabela[
                     "Valor Parcela"
                 ].apply(lambda x: f"R$ {x:,.2f}")
+                
                 df_exibir_tabela = df_exibir_tabela.drop(columns=["Valor Parcela"])
 
                 st.dataframe(
-                    df_exibir_tabela, use_container_width=True, hide_index=True
+                    df_exibir_tabela,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Cobrar WhatsApp": st.column_config.LinkColumn(
+                            "Enviar Lembrete",
+                            display_text="📲 Enviar Mensagem",
+                        )
+                    },
                 )
             else:
                 st.success("Nenhuma parcela pendente encontrada para este período!")
