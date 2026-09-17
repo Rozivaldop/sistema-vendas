@@ -2,7 +2,7 @@ import json
 import re
 import urllib.parse
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from dateutil.relativedelta import relativedelta
 import gspread
 from google.oauth2.service_account import Credentials
@@ -62,7 +62,6 @@ def obter_aba_clientes():
     try:
         sheet_cli = doc.worksheet("Clientes")
     except Exception:
-        # Se não existir a aba Clientes, cria automaticamente
         sheet_cli = doc.add_worksheet(title="Clientes", rows="100", cols="2")
         sheet_cli.append_row(["Nome", "Telefone"])
     return sheet_cli
@@ -108,7 +107,6 @@ def carregar_dados_clientes():
             if col not in df_cli.columns:
                 df_cli[col] = ""
 
-        # Remove linhas totalmente vazias
         df_cli = df_cli[df_cli["Nome"].str.strip() != ""]
         return df_cli[["Nome", "Telefone"]]
     except Exception as e:
@@ -116,19 +114,25 @@ def carregar_dados_clientes():
         return pd.DataFrame(columns=["Nome", "Telefone"])
 
 
-def parse_data_br(data_str):
-    if isinstance(data_str, datetime):
-        return data_str.date()
-    if hasattr(data_str, "year") and hasattr(data_str, "month") and hasattr(data_str, "day"):
-        return data_str
-    if not isinstance(data_str, str) or not data_str.strip():
+def parse_data_br(data_raw):
+    """Converte qualquer tipo de entrada de data com segurança para datetime.date"""
+    if isinstance(data_raw, datetime):
+        return data_raw.date()
+    if isinstance(data_raw, date):
+        return data_raw
+    if not data_raw or pd.isna(data_raw):
         return datetime.now().date()
 
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+    s = str(data_raw).strip()
+    if not s:
+        return datetime.now().date()
+
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
         try:
-            return datetime.strptime(data_str.strip(), fmt).date()
+            return datetime.strptime(s, fmt).date()
         except ValueError:
             pass
+
     return datetime.now().date()
 
 
@@ -199,13 +203,8 @@ def gerar_cronograma_recalculado(
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
-    # Tratamento garantido de tipo para evitar erro no relativedelta
-    if isinstance(data_primeira, datetime):
-        data_base = data_primeira.date()
-    elif hasattr(data_primeira, "year") and hasattr(data_primeira, "month") and hasattr(data_primeira, "day"):
-        data_base = data_primeira
-    else:
-        data_base = parse_data_br(data_primeira)
+    # Conversão rigorosa para garantir que seja um objeto date do Python nativo
+    data_base = parse_data_br(data_primeira)
 
     saldo_devedor = max(0.0, valor_total - valor_pago)
     valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
@@ -228,6 +227,7 @@ def gerar_cronograma_recalculado(
     cronograma = []
 
     for i in range(num_parcelas):
+        # A operação com relativedelta agora é 100% segura
         data_venc = data_base + relativedelta(months=i)
         data_str = data_venc.strftime("%d/%m/%Y")
 
@@ -436,7 +436,7 @@ else:
             col_a, col_b = st.columns(2)
 
             with col_a:
-                data_venda = st.date_input("Data da Venda", datetime.now(), format="DD/MM/YYYY")
+                data_venda = st.date_input("Data da Venda", datetime.now().date(), format="DD/MM/YYYY")
                 
                 cliente_selecionado = st.selectbox("👤 Selecionar Cliente Cadastrado", opcoes_cliente)
 
@@ -460,17 +460,15 @@ else:
                     step=1.0,
                 )
                 parcelas = st.number_input("Quantidade Total de Parcelas", min_value=1, value=1, step=1)
-                data_primeira_parcela = st.date_input("Data do 1º Vencimento / Parcela", datetime.now(), format="DD/MM/YYYY")
+                data_primeira_parcela = st.date_input("Data do 1º Vencimento / Parcela", datetime.now().date(), format="DD/MM/YYYY")
 
             if st.button("💾 Finalizar e Salvar Venda", type="primary"):
                 if cliente_nome.strip() != "":
                     try:
-                        # Se for cliente novo, salva na aba 'Clientes' também
                         if salvar_novo_cli_junto:
                             sheet_cli = obter_aba_clientes()
                             sheet_cli.append_row([cliente_nome.strip(), str(cliente_tel).strip()], value_input_option="USER_ENTERED")
 
-                        # Salva a Venda
                         sheet_vendas = obter_aba_vendas()
                         venda_id = str(uuid.uuid4())[:8]
 
@@ -663,7 +661,7 @@ else:
                             sheet.update_cell(linha_sheets, 7, str(round(float(novo_valor_total), 2)))
                             sheet.update_cell(linha_sheets, 8, str(round(float(novo_valor_pago_final), 2)))
                             sheet.update_cell(linha_sheets, 9, int(novas_parcelas))
-                            sheet.update_cell(linha_sheets, 10, nova_data_1.strftime("%d/%m/%Y"))
+                            sheet.update_cell(linha_sheets, 10, parse_data_br(nova_data_1).strftime("%d/%m/%Y"))
                             sheet.update_cell(linha_sheets, 11, str(novo_status))
 
                             st.session_state.versao_pagto += 1
