@@ -62,6 +62,10 @@ def carregar_dados():
         df = df.loc[:, df.columns != ""]
         df = df.loc[:, ~df.columns.duplicated()]
 
+        # Trata erro de digitação de Telenone para Telefone se existir
+        if "Telenone" in df.columns and "Telefone" not in df.columns:
+            df = df.rename(columns={"Telenone": "Telefone"})
+
         for col in COLUNAS_ESPERADAS:
             if col not in df.columns:
                 df[col] = ""
@@ -134,7 +138,7 @@ def gerar_link_whatsapp(telefone, cliente, produto, num_parcela, valor, vencimen
     """Gera URL com mensagem personalizada para o WhatsApp"""
     num_limpo = limpar_telefone(telefone)
     if not num_limpo:
-        return ""
+        return None
 
     msg = (
         f"Olá, *{cliente}*! Tudo bem?\n\n"
@@ -241,7 +245,7 @@ def expandir_todas_parcelas(df_vendas):
                 "Ano_Mes": p["Ano_Mes"],
                 "Valor Parcela": p["Valor Parcela (R$)"],
                 "Situação": p["Situação"],
-                "Cobrar WhatsApp": link_wa,
+                "Enviar Lembrete": link_wa,
             })
 
     return pd.DataFrame(lista_parcelas)
@@ -617,7 +621,7 @@ else:
                     "Vencimento",
                     "Valor Parcela",
                     "Situação",
-                    "Cobrar WhatsApp",
+                    "Enviar Lembrete",
                 ]].copy()
 
                 df_exibir_tabela["Valor Parcela (R$)"] = df_exibir_tabela[
@@ -631,7 +635,7 @@ else:
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "Cobrar WhatsApp": st.column_config.LinkColumn(
+                        "Enviar Lembrete": st.column_config.LinkColumn(
                             "Enviar Lembrete",
                             display_text="📲 Enviar Mensagem",
                         )
