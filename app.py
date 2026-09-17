@@ -137,14 +137,14 @@ def gerar_link_whatsapp(telefone, cliente, produto, num_parcela, valor, vencimen
         return ""
 
     msg = (
-        f"Olá, *{cliente}*! tudo bem?\n\n"
+        f"Olá, *{cliente}*! Tudo bem?\n\n"
         f"Passando para lembrar referente ao pagamento da parcela *{num_parcela}* "
         f"do produto *{produto}*.\n"
         f"💵 *Valor:* R$ {valor:,.2f}\n"
         f"📅 *Vencimento:* {vencimento}\n\n"
         f"Qualquer dúvida estou à disposição!"
     )
-    
+
     msg_encoded = urllib.parse.quote(msg)
     return f"https://wa.me/{num_limpo}?text={msg_encoded}"
 
@@ -206,7 +206,7 @@ def expandir_todas_parcelas(df_vendas):
     for _, row in df_vendas.iterrows():
         venda_id = row.get("ID", "")
         cliente = row.get("Cliente", "")
-        telefone = row.get("Telefone", "")
+        telefone = str(row.get("Telefone", "")).strip()
         produto = row.get("Produto", "")
         val_total = safe_float(row.get("Valor Total", 0))
         val_pago = safe_float(row.get("Valor Pago", 0))
@@ -222,9 +222,14 @@ def expandir_todas_parcelas(df_vendas):
 
         for _, p in df_crono.iterrows():
             link_wa = gerar_link_whatsapp(
-                telefone, cliente, produto, p["Nº Parcela"], p["Valor Parcela (R$)"], p["Vencimento"]
+                telefone,
+                cliente,
+                produto,
+                p["Nº Parcela"],
+                p["Valor Parcela (R$)"],
+                p["Vencimento"],
             )
-            
+
             lista_parcelas.append({
                 "ID Venda": venda_id,
                 "Cliente": cliente,
@@ -297,7 +302,7 @@ else:
                     "Data da Venda", datetime.now(), format="DD/MM/YYYY"
                 )
                 cliente = st.text_input("Nome do Cliente")
-                telefone = st.text_input("Telefone / WhatsApp (ex: 11999998888)")
+                telefone = st.text_input("Telefone / WhatsApp (ex: 84999998888)")
                 produto = st.text_input("Produto / Serviço Vendido")
                 valor_total = st.number_input(
                     "Valor Total (R$)", min_value=0.0, format="%.2f", step=1.0
@@ -338,7 +343,7 @@ else:
                         nova_linha = [
                             venda_id,
                             data_venda.strftime("%d/%m/%Y"),
-                            telefone,
+                            str(telefone).strip(),
                             cliente,
                             produto,
                             str(float(valor_total)),
@@ -487,7 +492,6 @@ else:
                         if cell:
                             linha_sheets = cell.row
 
-                            # Atualiza as células conforme nova ordem das colunas
                             sheet.update_cell(
                                 linha_sheets, 6, str(round(float(novo_valor_total), 2))
                             )
@@ -615,11 +619,11 @@ else:
                     "Situação",
                     "Cobrar WhatsApp",
                 ]].copy()
-                
+
                 df_exibir_tabela["Valor Parcela (R$)"] = df_exibir_tabela[
                     "Valor Parcela"
                 ].apply(lambda x: f"R$ {x:,.2f}")
-                
+
                 df_exibir_tabela = df_exibir_tabela.drop(columns=["Valor Parcela"])
 
                 st.dataframe(
