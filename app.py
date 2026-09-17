@@ -36,30 +36,92 @@ COLUNAS_VENDAS = [
 ]
 
 
-# --- FUNÇÃO INFALÍVEL PARA SOMAR MESES ---
-def adicionar_meses(data_origem, meses):
-    """
-    Adiciona meses garantindo tratamento de estouro de dias usando relativedelta.
-    Sempre retorna um objeto datetime.date válido.
-    """
-    try:
-        # Se for None ou inválido, assume a data atual
-        if data_origem is None or pd.isna(data_origem):
-            dt_base = datetime.now().date()
-        elif isinstance(data_origem, datetime):
-            dt_base = data_origem.date()
-        elif isinstance(data_origem, date):
-            dt_base = data_origem
-        else:
-            # Caso venha como string ou outro formato, tenta parsear
-            dt_base = parse_data_br(data_origem)
-
-        # relativedelta trata automaticamente dias 29, 30, 31 em meses menores
-        nova_data = dt_base + relativedelta(months=int(meses))
-        return nova_data
-    except Exception:
-        # Fallback de segurança máxima caso ocorra qualquer erro inesperado
+# --- FUNÇÕES DE DATA BLINDADAS ---
+def parse_data_br(data_raw):
+    """Converte qualquer tipo de entrada para datetime.date com fallback seguro."""
+    if data_raw is None or pd.isna(data_raw):
         return datetime.now().date()
+
+    if isinstance(data_raw, datetime):
+        return data_raw.date()
+    if isinstance(data_raw, date):
+        return data_raw
+
+    s = str(data_raw).strip()
+    if not s:
+        return datetime.now().date()
+
+    formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]
+    for fmt in formatos:
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+
+    return datetime.now().date()
+
+
+def adicionar_meses(data_origem, meses):
+    """Adiciona 'meses' a uma data tratando limites de dias de cada mês de forma segura."""
+    try:
+        dt_base = parse_data_br(data_origem)
+        # Tenta usar relativedelta (caso python-dateutil esteja instalado)
+        return dt_base + relativedelta(months=int(meses))
+    except Exception:
+        # Fallback usando lógica nativa do calendar se relativedelta falhar
+        try:
+            dt_base = parse_data_br(data_origem)
+            total_meses = dt_base.month - 1 + int(meses)
+            ano = dt_base.year + (total_meses // 12)
+            mes = (total_meses % 12) + 1
+            max_dias = calendar.monthrange(ano, mes)[1]
+            dia = min(dt_base.day, max_dias)
+            return date(ano, mes, dia)
+        except Exception:
+            return datetime.now().date()
+
+
+# --- FUNÇÕES AUXILIARES DE TRATAMENTO ---
+def safe_float(val, default=0.0):
+    try:
+        if pd.isna(val) or val == "" or val is None:
+            return default
+        if isinstance(val, (int, float)):
+            return float(val)
+
+        s = str(val).strip()
+        s = re.sub(r"[^\d.,-]", "", s)
+
+        if not s:
+            return default
+
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+
+        return float(s)
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_int(val, default=1):
+    try:
+        if pd.isna(val) or val == "" or val is None:
+            return default
+        num_float = safe_float(val, float(default))
+        return max(1, int(round(num_float)))
+    except (ValueError, TypeError):
+        return default
+
+
+def limpar_telefone(tel_str):
+    if not tel_str or pd.isna(tel_str):
+        return ""
+    num = re.sub(r"\D", "", str(tel_str))
+    if len(num) >= 10 and not num.startswith("55"):
+        num = "55" + num
+    return num
 
 
 # --- CONEXÃO COM O GOOGLE SHEETS ---
@@ -136,71 +198,6 @@ def carregar_dados_clientes():
     except Exception as e:
         st.error(f"Erro ao carregar clientes: {e}")
         return pd.DataFrame(columns=["Nome", "Telefone"])
-
-
-def parse_data_br(data_raw):
-    if data_raw is None or pd.isna(data_raw):
-        return datetime.now().date()
-
-    if isinstance(data_raw, datetime):
-        return data_raw.date()
-    if isinstance(data_raw, date):
-        return data_raw
-
-    s = str(data_raw).strip()
-    if not s:
-        return datetime.now().date()
-
-    formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]
-    for fmt in formatos:
-        try:
-            return datetime.strptime(s, fmt).date()
-        except ValueError:
-            pass
-
-    return datetime.now().date()
-
-
-def safe_float(val, default=0.0):
-    try:
-        if pd.isna(val) or val == "" or val is None:
-            return default
-        if isinstance(val, (int, float)):
-            return float(val)
-
-        s = str(val).strip()
-        s = re.sub(r"[^\d.,-]", "", s)
-
-        if not s:
-            return default
-
-        if "," in s and "." in s:
-            s = s.replace(".", "").replace(",", ".")
-        elif "," in s:
-            s = s.replace(",", ".")
-
-        return float(s)
-    except (ValueError, TypeError):
-        return default
-
-
-def safe_int(val, default=1):
-    try:
-        if pd.isna(val) or val == "" or val is None:
-            return default
-        num_float = safe_float(val, float(default))
-        return max(1, int(round(num_float)))
-    except (ValueError, TypeError):
-        return default
-
-
-def limpar_telefone(tel_str):
-    if not tel_str or pd.isna(tel_str):
-        return ""
-    num = re.sub(r"\D", "", str(tel_str))
-    if len(num) >= 10 and not num.startswith("55"):
-        num = "55" + num
-    return num
 
 
 def gerar_link_whatsapp(telefone, cliente, produto, detalhe_parcela, valor, vencimento):
