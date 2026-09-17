@@ -22,6 +22,7 @@ COLUNAS_ESPERADAS = [
     "Data",
     "Telefone",
     "Cliente",
+    "Categoria",
     "Produto",
     "Valor Total",
     "Valor Pago",
@@ -212,6 +213,7 @@ def expandir_todas_parcelas(df_vendas):
         venda_id = row.get("ID", "")
         cliente = row.get("Cliente", "")
         telefone = str(row.get("Telefone", "")).strip()
+        categoria = row.get("Categoria", "")
         produto = row.get("Produto", "")
         val_total = safe_float(row.get("Valor Total", 0))
         val_pago = safe_float(row.get("Valor Pago", 0))
@@ -226,10 +228,11 @@ def expandir_todas_parcelas(df_vendas):
         )
 
         for _, p in df_crono.iterrows():
+            prod_desc = f"[{categoria}] {produto}" if categoria else produto
             link_wa = gerar_link_whatsapp(
                 telefone,
                 cliente,
-                produto,
+                prod_desc,
                 p["Nº Parcela"],
                 p["Valor Parcela (R$)"],
                 p["Vencimento"],
@@ -239,6 +242,7 @@ def expandir_todas_parcelas(df_vendas):
                 "ID Venda": venda_id,
                 "Cliente": cliente,
                 "Telefone": telefone,
+                "Categoria": categoria,
                 "Produto": produto,
                 "Nº Parcela": p["Nº Parcela"],
                 "Vencimento": p["Vencimento"],
@@ -300,6 +304,60 @@ else:
     # --- ABA 1: CADASTRO ---
     with aba_cadastro:
         st.header("➕ Registrar Nova Venda")
+
+        # Seleção Dinâmica de Categorias e Itens
+        col_c1, col_c2, col_c3 = st.columns(3)
+
+        with col_c1:
+            categoria_sel = st.selectbox(
+                "🏷️ Categoria / Marca",
+                [
+                    "Roupas Sarru",
+                    "Roupas Crosby",
+                    "Lingerie Del Rayssa",
+                    "Produtos Sexshop",
+                    "Outros",
+                ],
+            )
+
+        with col_c2:
+            if categoria_sel in ["Roupas Sarru", "Roupas Crosby"]:
+                sub_item = st.selectbox(
+                    "👕 Tipo de Peça",
+                    ["Camisa", "Bermuda", "Calça", "Short", "Outros"],
+                )
+            elif categoria_sel == "Lingerie Del Rayssa":
+                sub_item = st.selectbox(
+                    "👙 Tipo de Peça",
+                    [
+                        "Calcinha",
+                        "Cueca Adulto",
+                        "Cueca Infantil",
+                        "Pijama",
+                        "Baby Doll",
+                        "Outros",
+                    ],
+                )
+            else:
+                sub_item = "Produto Diverso"
+
+        with col_c3:
+            detalhe_extra = st.text_input(
+                "📝 Detalhes / Modelo / Cor / Tam (Opcional)",
+                placeholder="Ex: M, Cor Preta",
+            )
+
+        # Monta a descrição final do produto automaticamente
+        if categoria_sel == "Produtos Sexshop":
+            produto_final = detalhe_extra if detalhe_extra else "Produto Sexshop"
+        else:
+            if detalhe_extra:
+                produto_final = f"{sub_item} ({detalhe_extra})"
+            else:
+                produto_final = sub_item
+
+        st.divider()
+
         with st.form("form_nova_venda", clear_on_submit=True):
             col_a, col_b = st.columns(2)
             with col_a:
@@ -308,7 +366,7 @@ else:
                 )
                 cliente = st.text_input("Nome do Cliente")
                 telefone = st.text_input("Telefone / WhatsApp (ex: 84999998888)")
-                produto = st.text_input("Produto / Serviço Vendido")
+                st.info(f"📦 **Produto Selecionado:** [{categoria_sel}] {produto_final}")
                 valor_total = st.number_input(
                     "Valor Total (R$)", min_value=0.0, format="%.2f", step=1.0
                 )
@@ -333,7 +391,7 @@ else:
             submeter = st.form_submit_button("💾 Salvar Venda", type="primary")
 
             if submeter:
-                if cliente.strip() != "" and produto.strip() != "":
+                if cliente.strip() != "" and produto_final.strip() != "":
                     try:
                         sheet = obter_conexao()
                         venda_id = str(uuid.uuid4())[:8]
@@ -345,12 +403,14 @@ else:
                         else:
                             status_inicial = "A Receber"
 
+                        # Grava a nova linha na planilha (incluindo Categoria)
                         nova_linha = [
                             venda_id,
                             data_venda.strftime("%d/%m/%Y"),
                             str(telefone).strip(),
                             cliente,
-                            produto,
+                            categoria_sel,
+                            produto_final,
                             str(float(valor_total)),
                             str(float(valor_pago_inicial)),
                             str(int(parcelas)),
@@ -359,7 +419,7 @@ else:
                         ]
                         sheet.append_row(nova_linha, value_input_option="USER_ENTERED")
                         st.success(
-                            f"Venda para **{cliente}** salva com sucesso! (ID: {venda_id})"
+                            f"Venda para **{cliente}** ({categoria_sel} - {produto_final}) salva com sucesso!"
                         )
                         st.cache_data.clear()
                         st.rerun()
@@ -374,9 +434,9 @@ else:
         if not df_vendas.empty:
             opcoes_vendas = df_vendas.apply(
                 lambda row: (
-                    f"ID: {row.get('ID', '')} | {row.get('Cliente', '')} - Total: R$"
-                    f" {safe_float(row.get('Valor Total', 0)):.2f} | Pago Atual: R$"
-                    f" {safe_float(row.get('Valor Pago', 0)):.2f}"
+                    f"ID: {row.get('ID', '')} | {row.get('Cliente', '')} - "
+                    f"[{row.get('Categoria', 'S/Cat')}] {row.get('Produto', '')} | "
+                    f"Total: R$ {safe_float(row.get('Valor Total', 0)):.2f}"
                 ),
                 axis=1,
             ).tolist()
@@ -405,6 +465,9 @@ else:
 
             with col_edit1:
                 st.subheader(f"👤 Cliente: {dados_venda.get('Cliente', '')}")
+                st.caption(
+                    f"📦 Produto: **[{dados_venda.get('Categoria', '')}] {dados_venda.get('Produto', '')}**"
+                )
 
                 novo_valor_total = st.number_input(
                     "Valor Total da Venda (R$)",
@@ -497,17 +560,18 @@ else:
                         if cell:
                             linha_sheets = cell.row
 
+                            # Atualiza colunas (ajustado para a nova posição)
                             sheet.update_cell(
-                                linha_sheets, 6, str(round(float(novo_valor_total), 2))
+                                linha_sheets, 7, str(round(float(novo_valor_total), 2))
                             )
                             sheet.update_cell(
-                                linha_sheets, 7, str(round(float(novo_valor_pago_final), 2))
+                                linha_sheets, 8, str(round(float(novo_valor_pago_final), 2))
                             )
-                            sheet.update_cell(linha_sheets, 8, int(novas_parcelas))
+                            sheet.update_cell(linha_sheets, 9, int(novas_parcelas))
                             sheet.update_cell(
-                                linha_sheets, 9, nova_data_1.strftime("%d/%m/%Y")
+                                linha_sheets, 10, nova_data_1.strftime("%d/%m/%Y")
                             )
-                            sheet.update_cell(linha_sheets, 10, str(novo_status))
+                            sheet.update_cell(linha_sheets, 11, str(novo_status))
 
                             st.session_state.versao_pagto += 1
 
@@ -617,6 +681,7 @@ else:
             if not df_exibir.empty:
                 df_exibir_tabela = df_exibir[[
                     "Cliente",
+                    "Categoria",
                     "Produto",
                     "Nº Parcela",
                     "Vencimento",
@@ -652,6 +717,15 @@ else:
     with aba_historico:
         st.header("📋 Todas as Vendas Registradas")
         if not df_vendas.empty:
-            st.dataframe(df_vendas, use_container_width=True, hide_index=True)
+            # Filtro por cliente para achar rápido
+            cliente_filtro = st.text_input("🔍 Buscar por Nome do Cliente")
+            if cliente_filtro:
+                df_vendas_exibir = df_vendas[
+                    df_vendas["Cliente"].str.contains(cliente_filtro, case=False, na=False)
+                ]
+            else:
+                df_vendas_exibir = df_vendas
+
+            st.dataframe(df_vendas_exibir, use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum registro encontrado.")
