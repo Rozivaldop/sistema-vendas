@@ -13,9 +13,12 @@ st.set_page_config(
     page_title="Sistema de Vendas & Cobranças", layout="wide", page_icon="📊"
 )
 
-# Inicialização da chave de controle para zerar o campo de pagamento
+# --- INICIALIZAÇÃO DE ESTADOS DA SESSÃO ---
 if "versao_pagto" not in st.session_state:
     st.session_state.versao_pagto = 0
+
+if "carrinho" not in st.session_state:
+    st.session_state.carrinho = []
 
 COLUNAS_ESPERADAS = [
     "ID",
@@ -144,7 +147,7 @@ def gerar_link_whatsapp(telefone, cliente, produto, num_parcela, valor, vencimen
     msg = (
         f"Olá, *{cliente}*! Espero que esteja bem.\n\n"
         f"Estou passando para organizar os pagamentos e enviar o lembrete da parcela *{num_parcela}* "
-        f"do item *{produto}*.\n\n"
+        f"referente aos itens: *{produto}*.\n\n"
         f"- *Valor:* R$ {valor:,.2f}\n"
         f"- *Vencimento:* {vencimento}\n\n"
         f"Se já tiver efetuado o pagamento, por favor desconsidere esta mensagem. "
@@ -301,11 +304,11 @@ else:
         "📋 Histórico Completo",
     ])
 
-    # --- ABA 1: CADASTRO ---
+    # --- ABA 1: CADASTRO MULTI-ITENS ---
     with aba_cadastro:
-        st.header("➕ Registrar Nova Venda")
+        st.header("➕ Registrar Nova Venda (Múltiplos Itens)")
 
-        # Seleção Dinâmica de Categorias e Itens
+        st.subheader("1️⃣ Adicionar Itens à Sacola")
         col_c1, col_c2, col_c3 = st.columns(3)
 
         with col_c1:
@@ -343,90 +346,137 @@ else:
 
         with col_c3:
             detalhe_extra = st.text_input(
-                "📝 Detalhes / Modelo / Cor / Tam (Opcional)",
+                "📝 Detalhes / Modelo / Cor / Tam",
                 placeholder="Ex: M, Cor Preta",
             )
 
-        # Monta a descrição final do produto automaticamente
-        if categoria_sel == "Produtos Sexshop":
-            produto_final = detalhe_extra if detalhe_extra else "Produto Sexshop"
-        else:
-            if detalhe_extra:
-                produto_final = f"{sub_item} ({detalhe_extra})"
+        col_p1, col_p2, col_p3 = st.columns([1, 1, 1])
+        with col_p1:
+            qtd_item = st.number_input("Quantidade", min_value=1, value=1, step=1)
+        with col_p2:
+            valor_unitario = st.number_input(
+                "Valor Unitário (R$)", min_value=0.0, format="%.2f", step=5.0
+            )
+        with col_p3:
+            st.write("")
+            st.write("")
+            btn_add_carrinho = st.button("➕ Adicionar à Sacola", type="secondary")
+
+        if btn_add_carrinho:
+            if categoria_sel == "Produtos Sexshop" and detalhe_extra:
+                desc_prod = detalhe_extra
+            elif detalhe_extra:
+                desc_prod = f"{sub_item} ({detalhe_extra})"
             else:
-                produto_final = sub_item
+                desc_prod = sub_item
 
-        st.divider()
+            subtotal = valor_unitario * qtd_item
 
-        with st.form("form_nova_venda", clear_on_submit=True):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                data_venda = st.date_input(
-                    "Data da Venda", datetime.now(), format="DD/MM/YYYY"
-                )
-                cliente = st.text_input("Nome do Cliente")
-                telefone = st.text_input("Telefone / WhatsApp (ex: 84999998888)")
-                st.info(f"📦 **Produto Selecionado:** [{categoria_sel}] {produto_final}")
-                valor_total = st.number_input(
-                    "Valor Total (R$)", min_value=0.0, format="%.2f", step=1.0
-                )
+            st.session_state.carrinho.append({
+                "Categoria": categoria_sel,
+                "Produto": desc_prod,
+                "Qtd": qtd_item,
+                "Valor Unit.": valor_unitario,
+                "Subtotal": subtotal,
+            })
+            st.success(f"Item '{desc_prod}' adicionado à sacola!")
 
-            with col_b:
-                valor_pago_inicial = st.number_input(
-                    "Valor Já Pago na Entrada (R$)",
-                    min_value=0.0,
-                    value=0.0,
-                    format="%.2f",
-                    step=1.0,
-                )
-                parcelas = st.number_input(
-                    "Quantidade Total de Parcelas", min_value=1, value=1, step=1
-                )
-                data_primeira_parcela = st.date_input(
-                    "Data do 1º Vencimento / Parcela",
-                    datetime.now(),
-                    format="DD/MM/YYYY",
-                )
+        # EXIBIÇÃO DA SACOLA
+        if st.session_state.carrinho:
+            st.subheader("🛍️ Itens na Sacola")
+            df_carrinho = pd.DataFrame(st.session_state.carrinho)
+            st.dataframe(df_carrinho, use_container_width=True, hide_index=True)
 
-            submeter = st.form_submit_button("💾 Salvar Venda", type="primary")
+            val_total_sacola = df_carrinho["Subtotal"].sum()
+            st.markdown(f"### 💰 **Total da Sacola: R$ {val_total_sacola:,.2f}**")
 
-            if submeter:
-                if cliente.strip() != "" and produto_final.strip() != "":
-                    try:
-                        sheet = obter_conexao()
-                        venda_id = str(uuid.uuid4())[:8]
+            if st.button("🗑️ Esvaziar Sacola"):
+                st.session_state.carrinho = []
+                st.rerun()
 
-                        if valor_pago_inicial >= valor_total and valor_total > 0:
-                            status_inicial = "Pago"
-                        elif valor_pago_inicial > 0:
-                            status_inicial = "Parcial"
-                        else:
-                            status_inicial = "A Receber"
+            st.divider()
 
-                        # Grava a nova linha na planilha (incluindo Categoria)
-                        nova_linha = [
-                            venda_id,
-                            data_venda.strftime("%d/%m/%Y"),
-                            str(telefone).strip(),
-                            cliente,
-                            categoria_sel,
-                            produto_final,
-                            str(float(valor_total)),
-                            str(float(valor_pago_inicial)),
-                            str(int(parcelas)),
-                            data_primeira_parcela.strftime("%d/%m/%Y"),
-                            status_inicial,
-                        ]
-                        sheet.append_row(nova_linha, value_input_option="USER_ENTERED")
-                        st.success(
-                            f"Venda para **{cliente}** ({categoria_sel} - {produto_final}) salva com sucesso!"
-                        )
-                        st.cache_data.clear()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao salvar na planilha: {e}")
-                else:
-                    st.warning("Preencha o nome do cliente e do produto.")
+            st.subheader("2️⃣ Finalizar Cadastro da Venda")
+            with st.form("form_finalizar_venda", clear_on_submit=True):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    data_venda = st.date_input(
+                        "Data da Venda", datetime.now(), format="DD/MM/YYYY"
+                    )
+                    cliente = st.text_input("Nome do Cliente")
+                    telefone = st.text_input("Telefone / WhatsApp (ex: 84999998888)")
+
+                with col_b:
+                    valor_pago_inicial = st.number_input(
+                        "Valor Já Pago na Entrada (R$)",
+                        min_value=0.0,
+                        value=0.0,
+                        format="%.2f",
+                        step=1.0,
+                    )
+                    parcelas = st.number_input(
+                        "Quantidade Total de Parcelas", min_value=1, value=1, step=1
+                    )
+                    data_primeira_parcela = st.date_input(
+                        "Data do 1º Vencimento / Parcela",
+                        datetime.now(),
+                        format="DD/MM/YYYY",
+                    )
+
+                submeter = st.form_submit_button("💾 Salvar Venda Completa", type="primary")
+
+                if submeter:
+                    if cliente.strip() != "":
+                        try:
+                            sheet = obter_conexao()
+                            venda_id = str(uuid.uuid4())[:8]
+
+                            # Agrupa categorias e descrições dos produtos
+                            cats_unicas = list(
+                                set([item["Categoria"] for item in st.session_state.carrinho])
+                            )
+                            string_categorias = ", ".join(cats_unicas)
+
+                            prods_formatados = [
+                                f"{item['Qtd']}x [{item['Categoria']}] {item['Produto']}"
+                                for item in st.session_state.carrinho
+                            ]
+                            string_produtos = " | ".join(prods_formatados)
+
+                            if valor_pago_inicial >= val_total_sacola and val_total_sacola > 0:
+                                status_inicial = "Pago"
+                            elif valor_pago_inicial > 0:
+                                status_inicial = "Parcial"
+                            else:
+                                status_inicial = "A Receber"
+
+                            nova_linha = [
+                                venda_id,
+                                data_venda.strftime("%d/%m/%Y"),
+                                str(telefone).strip(),
+                                cliente,
+                                string_categorias,
+                                string_produtos,
+                                str(float(val_total_sacola)),
+                                str(float(valor_pago_inicial)),
+                                str(int(parcelas)),
+                                data_primeira_parcela.strftime("%d/%m/%Y"),
+                                status_inicial,
+                            ]
+                            sheet.append_row(nova_linha, value_input_option="USER_ENTERED")
+                            
+                            st.session_state.carrinho = []  # Limpa a sacola
+                            st.success(
+                                f"Venda para **{cliente}** salva com sucesso! (ID: {venda_id})"
+                            )
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao salvar na planilha: {e}")
+                    else:
+                        st.warning("Preencha o nome do cliente.")
+        else:
+            st.info("💡 Adicione pelo menos um item à sacola para prosseguir com o cadastro da venda.")
 
     # --- ABA 2: EDITAR / REGISTRAR PAGAMENTO ---
     with aba_atualizar:
@@ -435,7 +485,7 @@ else:
             opcoes_vendas = df_vendas.apply(
                 lambda row: (
                     f"ID: {row.get('ID', '')} | {row.get('Cliente', '')} - "
-                    f"[{row.get('Categoria', 'S/Cat')}] {row.get('Produto', '')} | "
+                    f"[{row.get('Categoria', 'S/Cat')}] {row.get('Produto', '')[:30]}... | "
                     f"Total: R$ {safe_float(row.get('Valor Total', 0)):.2f}"
                 ),
                 axis=1,
@@ -466,7 +516,7 @@ else:
             with col_edit1:
                 st.subheader(f"👤 Cliente: {dados_venda.get('Cliente', '')}")
                 st.caption(
-                    f"📦 Produto: **[{dados_venda.get('Categoria', '')}] {dados_venda.get('Produto', '')}**"
+                    f"📦 Produtos: **[{dados_venda.get('Categoria', '')}] {dados_venda.get('Produto', '')}**"
                 )
 
                 novo_valor_total = st.number_input(
@@ -560,7 +610,6 @@ else:
                         if cell:
                             linha_sheets = cell.row
 
-                            # Atualiza colunas (ajustado para a nova posição)
                             sheet.update_cell(
                                 linha_sheets, 7, str(round(float(novo_valor_total), 2))
                             )
@@ -717,7 +766,6 @@ else:
     with aba_historico:
         st.header("📋 Todas as Vendas Registradas")
         if not df_vendas.empty:
-            # Filtro por cliente para achar rápido
             cliente_filtro = st.text_input("🔍 Buscar por Nome do Cliente")
             if cliente_filtro:
                 df_vendas_exibir = df_vendas[
