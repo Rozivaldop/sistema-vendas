@@ -115,19 +115,21 @@ def carregar_dados_clientes():
 
 
 def parse_data_br(data_raw):
-    """Converte qualquer tipo de entrada de data com segurança para datetime.date"""
+    """Converte estritamente qualquer tipo de entrada (str, datetime, date) para datetime.date"""
+    if data_raw is None or pd.isna(data_raw):
+        return datetime.now().date()
+
     if isinstance(data_raw, datetime):
         return data_raw.date()
     if isinstance(data_raw, date):
         return data_raw
-    if not data_raw or pd.isna(data_raw):
-        return datetime.now().date()
 
     s = str(data_raw).strip()
     if not s:
         return datetime.now().date()
 
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
+    formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]
+    for fmt in formatos:
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
@@ -203,11 +205,15 @@ def gerar_cronograma_recalculado(
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
-    # Conversão rigorosa para garantir que seja um objeto date do Python nativo
+    # Conversão cega e segura para objeto datetime.date nativo
     data_base = parse_data_br(data_primeira)
+    if not isinstance(data_base, date):
+        data_base = datetime.now().date()
 
     saldo_devedor = max(0.0, valor_total - valor_pago)
-    valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
+    valor_original_parcela = (
+        valor_total / num_parcelas if num_parcelas > 0 else 0
+    )
 
     if valor_original_parcela > 0:
         parcelas_quitadas = int(valor_pago // valor_original_parcela)
@@ -227,7 +233,6 @@ def gerar_cronograma_recalculado(
     cronograma = []
 
     for i in range(num_parcelas):
-        # A operação com relativedelta agora é 100% segura
         data_venc = data_base + relativedelta(months=i)
         data_str = data_venc.strftime("%d/%m/%Y")
 
@@ -429,7 +434,6 @@ else:
 
             st.subheader("2️⃣ Finalizar Cadastro da Venda")
             
-            # Seleção Inteligente de Cliente
             lista_nomes = sorted(df_clientes["Nome"].unique().tolist()) if not df_clientes.empty else []
             opcoes_cliente = ["➕ NOME NÃO LISTADO (Cadastrar Novo)"] + lista_nomes
 
@@ -681,8 +685,9 @@ else:
                 c_m1.metric("Novo Total Pago", f"R$ {novo_valor_pago_final:,.2f}")
                 c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div_prev:,.2f}")
 
+                # Passando explicitamente por parse_data_br
                 df_cronograma_prev, _ = gerar_cronograma_recalculado(
-                    nova_data_1,
+                    parse_data_br(nova_data_1),
                     novas_parcelas,
                     novo_valor_total,
                     novo_valor_pago_final,
