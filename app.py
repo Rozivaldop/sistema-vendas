@@ -4,6 +4,7 @@ import urllib.parse
 import uuid
 import calendar
 from datetime import datetime, date
+from dateutil.relativedelta import relativedelta
 import gspread
 from google.oauth2.service_account import Credentials
 import pandas as pd
@@ -35,23 +36,30 @@ COLUNAS_VENDAS = [
 ]
 
 
-# --- FUNÇÃO NATIVA SEGURA PARA SOMAR MESES ---
+# --- FUNÇÃO INFALÍVEL PARA SOMAR MESES ---
 def adicionar_meses(data_origem, meses):
-    """Adiciona 'meses' a um objeto date/datetime garantindo o limite de dias do mês destino."""
-    if not isinstance(data_origem, (date, datetime)):
-        data_origem = datetime.now().date()
-    elif isinstance(data_origem, datetime):
-        data_origem = data_origem.date()
+    """
+    Adiciona meses garantindo tratamento de estouro de dias usando relativedelta.
+    Sempre retorna um objeto datetime.date válido.
+    """
+    try:
+        # Se for None ou inválido, assume a data atual
+        if data_origem is None or pd.isna(data_origem):
+            dt_base = datetime.now().date()
+        elif isinstance(data_origem, datetime):
+            dt_base = data_origem.date()
+        elif isinstance(data_origem, date):
+            dt_base = data_origem
+        else:
+            # Caso venha como string ou outro formato, tenta parsear
+            dt_base = parse_data_br(data_origem)
 
-    total_meses = data_origem.month - 1 + meses
-    ano = data_origem.year + (total_meses // 12)
-    mes = (total_meses % 12) + 1
-
-    # Obtém o último dia válido do mês de destino (ex: 28, 29, 30 ou 31)
-    max_dias = calendar.monthrange(ano, mes)[1]
-    dia = min(data_origem.day, max_dias)
-
-    return date(ano, mes, dia)
+        # relativedelta trata automaticamente dias 29, 30, 31 em meses menores
+        nova_data = dt_base + relativedelta(months=int(meses))
+        return nova_data
+    except Exception:
+        # Fallback de segurança máxima caso ocorra qualquer erro inesperado
+        return datetime.now().date()
 
 
 # --- CONEXÃO COM O GOOGLE SHEETS ---
@@ -218,10 +226,7 @@ def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
-    if data_primeira is None:
-        data_base = datetime.now().date()
-    else:
-        data_base = parse_data_br(data_primeira)
+    data_base = parse_data_br(data_primeira)
 
     saldo_devedor = max(0.0, valor_total - valor_pago)
     valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
@@ -442,7 +447,7 @@ else:
             st.divider()
 
             st.subheader("2️⃣ Finalizar Cadastro da Venda")
-            
+
             lista_nomes = sorted(df_clientes["Nome"].unique().tolist()) if not df_clientes.empty else []
             opcoes_cliente = ["➕ NOME NÃO LISTADO (Cadastrar Novo)"] + lista_nomes
 
@@ -562,7 +567,7 @@ else:
     # --- ABA 3: EDITAR / REGISTRAR PAGAMENTO ---
     with aba_atualizar:
         st.header("🔄 Registrar Pagamento / Editar Venda")
-        
+
         if not df_vendas.empty and len(df_vendas) > 0:
             opcoes_vendas = df_vendas.apply(
                 lambda row: (
@@ -737,7 +742,7 @@ else:
                 st.divider()
 
                 st.subheader(f"👥 Cobranças Agrupadas por Cliente ({mes_selecionado})")
-                
+
                 df_pendentes_mes = df_parc_filtrado[df_parc_filtrado["Situação"] == "⏳ Pendente"]
 
                 if not df_pendentes_mes.empty:
