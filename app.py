@@ -119,6 +119,8 @@ def carregar_dados_clientes():
 def parse_data_br(data_str):
     if isinstance(data_str, datetime):
         return data_str.date()
+    if hasattr(data_str, "year") and hasattr(data_str, "month") and hasattr(data_str, "day"):
+        return data_str
     if not isinstance(data_str, str) or not data_str.strip():
         return datetime.now().date()
 
@@ -197,7 +199,14 @@ def gerar_cronograma_recalculado(
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
-    data_base = parse_data_br(data_primeira)
+    # Tratamento garantido de tipo para evitar erro no relativedelta
+    if isinstance(data_primeira, datetime):
+        data_base = data_primeira.date()
+    elif hasattr(data_primeira, "year") and hasattr(data_primeira, "month") and hasattr(data_primeira, "day"):
+        data_base = data_primeira
+    else:
+        data_base = parse_data_br(data_primeira)
+
     saldo_devedor = max(0.0, valor_total - valor_pago)
     valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
 
@@ -621,7 +630,7 @@ else:
 
                 nova_data_1 = st.date_input(
                     "Data do 1º Vencimento",
-                    data_1_parsed,
+                    value=data_1_parsed,
                     format="DD/MM/YYYY",
                     key=f"dt1_{venda_id_alvo}",
                 )
