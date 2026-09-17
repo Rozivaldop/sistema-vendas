@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import json
 import re
 import urllib.parse
@@ -11,10 +10,10 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(
-    page_title="Sistema de Vendas e Cobrancas", layout="wide"
+    page_title="Sistema de Vendas & Cobranças", layout="wide", page_icon="📊"
 )
 
-# Inicializacao da chave de controle para zerar o campo de pagamento
+# Inicialização da chave de controle para zerar o campo de pagamento
 if "versao_pagto" not in st.session_state:
     st.session_state.versao_pagto = 0
 
@@ -27,12 +26,12 @@ COLUNAS_ESPERADAS = [
     "Valor Total",
     "Valor Pago",
     "Parcelas",
-    "Data 1a Parcela",
+    "Data 1ª Parcela",
     "Status",
 ]
 
 
-# --- CONEXAO COM O GOOGLE SHEETS ---
+# --- CONEXÃO COM O GOOGLE SHEETS ---
 def obter_conexao():
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
@@ -49,21 +48,21 @@ def obter_conexao():
 
 
 def carregar_dados():
-    """Le a planilha diretamente do Google Sheets e trata colunas duplicadas/vazias"""
+    """Lê a planilha diretamente do Google Sheets e trata colunas duplicadas/vazias"""
     try:
         sheet = obter_conexao()
         dados = sheet.get_all_values()
         if not dados or len(dados) <= 1:
             return pd.DataFrame(columns=COLUNAS_ESPERADAS)
 
-        cabecalho = [str(c).strip() for c in dados[0]]
-        df = pd.DataFrame(dados[1:], columns=cabecalho)
+        cabeçalho = [str(c).strip() for c in dados[0]]
+        df = pd.DataFrame(dados[1:], columns=cabeçalho)
 
         # Trata colunas vazias e duplicadas
         df = df.loc[:, df.columns != ""]
         df = df.loc[:, ~df.columns.duplicated()]
 
-        # Trata erro de digitacao de Telenone para Telefone se existir
+        # Trata erro de digitação de Telenone para Telefone se existir
         if "Telenone" in df.columns and "Telefone" not in df.columns:
             df = df.rename(columns={"Telenone": "Telefone"})
 
@@ -126,7 +125,7 @@ def safe_int(val, default=1):
 
 
 def limpar_telefone(tel_str):
-    """Remove caracteres nao numericos do telefone"""
+    """Remove caracteres não numéricos do telefone"""
     if not tel_str or pd.isna(tel_str):
         return ""
     num = re.sub(r"\D", "", str(tel_str))
@@ -136,19 +135,19 @@ def limpar_telefone(tel_str):
 
 
 def gerar_link_whatsapp(telefone, cliente, produto, num_parcela, valor, vencimento):
-    """Gera URL com mensagem limpa, sem emojis ou caracteres especiais"""
+    """Gera URL com mensagem limpa (TOTALMENTE SEM EMOJIS NO TEXTO DO WHATSAPP)"""
     num_limpo = limpar_telefone(telefone)
     if not num_limpo:
         return None
 
     msg = (
-        f"Ola, *{cliente}*! Espero que esteja bem.\n\n"
+        f"Olá, *{cliente}*! Espero que esteja bem.\n\n"
         f"Estou passando para organizar os pagamentos e enviar o lembrete da parcela *{num_parcela}* "
         f"do item *{produto}*.\n\n"
         f"- *Valor:* R$ {valor:,.2f}\n"
         f"- *Vencimento:* {vencimento}\n\n"
-        f"Se ja tiver efetuado o pagamento, por favor desconsidere esta mensagem. "
-        f"Caso precise da chave PIX ou tenha qualquer duvida, me avise por aqui!"
+        f"Se já tiver efetuado o pagamento, por favor desconsidere esta mensagem. "
+        f"Caso precise da chave PIX ou tenha qualquer dúvida, me avise por aqui!"
     )
 
     msg_encoded = urllib.parse.quote(msg)
@@ -188,19 +187,19 @@ def gerar_cronograma_recalculado(
         data_str = data_venc.strftime("%d/%m/%Y")
 
         if i < parcelas_quitadas:
-            st_parc = "Quitada"
+            st_parc = "✅ Quitada"
             val_parc = valor_original_parcela
         else:
-            st_parc = "Pendente"
+            st_parc = "⏳ Pendente"
             val_parc = novo_valor_parcela_pendente
 
         cronograma.append({
-            "N Parcela": f"{i+1}/{num_parcelas}",
+            "Nº Parcela": f"{i+1}/{num_parcelas}",
             "Vencimento": data_str,
             "Data_Venc_Obj": data_venc,
             "Ano_Mes": data_venc.strftime("%m/%Y"),
             "Valor Parcela (R$)": round(val_parc, 2),
-            "Situacao": st_parc,
+            "Situação": st_parc,
         })
 
     return pd.DataFrame(cronograma), saldo_devedor
@@ -218,7 +217,7 @@ def expandir_todas_parcelas(df_vendas):
         val_pago = safe_float(row.get("Valor Pago", 0))
         num_parc = safe_int(row.get("Parcelas", 1), 1)
 
-        dt_1_raw = row.get("Data 1a Parcela", "")
+        dt_1_raw = row.get("Data 1ª Parcela", "")
         if not dt_1_raw or str(dt_1_raw).strip() == "":
             dt_1_raw = row.get("Data", "")
 
@@ -231,7 +230,7 @@ def expandir_todas_parcelas(df_vendas):
                 telefone,
                 cliente,
                 produto,
-                p["N Parcela"],
+                p["Nº Parcela"],
                 p["Valor Parcela (R$)"],
                 p["Vencimento"],
             )
@@ -241,12 +240,12 @@ def expandir_todas_parcelas(df_vendas):
                 "Cliente": cliente,
                 "Telefone": telefone,
                 "Produto": produto,
-                "N Parcela": p["N Parcela"],
+                "Nº Parcela": p["Nº Parcela"],
                 "Vencimento": p["Vencimento"],
                 "Data_Venc_Obj": p["Data_Venc_Obj"],
                 "Ano_Mes": p["Ano_Mes"],
                 "Valor Parcela": p["Valor Parcela (R$)"],
-                "Situacao": p["Situacao"],
+                "Situação": p["Situação"],
                 "Enviar Lembrete": link_wa,
             })
 
@@ -258,49 +257,49 @@ if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
 if not st.session_state.autenticado:
-    st.title("Login do Sistema de Vendas")
+    st.title("🔒 Login do Sistema de Vendas")
     col1, _ = st.columns([1, 2])
     with col1:
-        usuario = st.text_input("Usuario")
+        usuario = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
         if st.button("Entrar", type="primary"):
             if usuario == "admin" and senha == "1234":
                 st.session_state.autenticado = True
                 st.rerun()
             else:
-                st.error("Usuario ou senha incorretos.")
+                st.error("Usuário ou senha incorretos.")
 else:
     # --- BARRA LATERAL ---
-    st.sidebar.title("Opcoes")
-    if st.sidebar.button("Recarregar Dados"):
+    st.sidebar.title("⚙️ Opções")
+    if st.sidebar.button("🔄 Recarregar Dados"):
         st.cache_data.clear()
         st.rerun()
 
-    if st.sidebar.button("Sair / Logout"):
+    if st.sidebar.button("🚪 Sair / Logout"):
         st.session_state.autenticado = False
         st.rerun()
 
-    # --- CABECALHO ---
+    # --- CABEÇALHO ---
     col_t1, col_t2 = st.columns([3, 1])
     with col_t1:
-        st.title("Gestao de Vendas e Recebimentos")
+        st.title("📊 Gestão de Vendas & Recebimentos")
     with col_t2:
-        if st.button("Sincronizar", type="secondary"):
+        if st.button("🔄 Sincronizar", type="secondary"):
             st.cache_data.clear()
             st.rerun()
 
     df_vendas = carregar_dados()
 
     aba_cadastro, aba_atualizar, aba_dash, aba_historico = st.tabs([
-        "Cadastrar Venda",
-        "Registrar Pagamento / Editar",
-        "Dashboard e Contas a Receber",
-        "Historico Completo",
+        "➕ Cadastrar Venda",
+        "🔄 Registrar Pagamento / Editar",
+        "📈 Dashboard & Contas a Receber",
+        "📋 Histórico Completo",
     ])
 
     # --- ABA 1: CADASTRO ---
     with aba_cadastro:
-        st.header("Registrar Nova Venda")
+        st.header("➕ Registrar Nova Venda")
         with st.form("form_nova_venda", clear_on_submit=True):
             col_a, col_b = st.columns(2)
             with col_a:
@@ -309,14 +308,14 @@ else:
                 )
                 cliente = st.text_input("Nome do Cliente")
                 telefone = st.text_input("Telefone / WhatsApp (ex: 84999998888)")
-                produto = st.text_input("Produto / Servico Vendido")
+                produto = st.text_input("Produto / Serviço Vendido")
                 valor_total = st.number_input(
                     "Valor Total (R$)", min_value=0.0, format="%.2f", step=1.0
                 )
 
             with col_b:
                 valor_pago_inicial = st.number_input(
-                    "Valor Ja Pago na Entrada (R$)",
+                    "Valor Já Pago na Entrada (R$)",
                     min_value=0.0,
                     value=0.0,
                     format="%.2f",
@@ -326,12 +325,12 @@ else:
                     "Quantidade Total de Parcelas", min_value=1, value=1, step=1
                 )
                 data_primeira_parcela = st.date_input(
-                    "Data do 1 Vencimento / Parcela",
+                    "Data do 1º Vencimento / Parcela",
                     datetime.now(),
                     format="DD/MM/YYYY",
                 )
 
-            submeter = st.form_submit_button("Salvar Venda", type="primary")
+            submeter = st.form_submit_button("💾 Salvar Venda", type="primary")
 
             if submeter:
                 if cliente.strip() != "" and produto.strip() != "":
@@ -371,7 +370,7 @@ else:
 
     # --- ABA 2: EDITAR / REGISTRAR PAGAMENTO ---
     with aba_atualizar:
-        st.header("Registrar Pagamento / Editar Venda")
+        st.header("🔄 Registrar Pagamento / Editar Venda")
         if not df_vendas.empty:
             opcoes_vendas = df_vendas.apply(
                 lambda row: (
@@ -393,7 +392,7 @@ else:
             val_pago_atual = safe_float(dados_venda.get("Valor Pago", 0))
             parcelas_atual = safe_int(dados_venda.get("Parcelas", 1), 1)
 
-            dt_1_str = dados_venda.get("Data 1a Parcela", "")
+            dt_1_str = dados_venda.get("Data 1ª Parcela", "")
             if not dt_1_str or str(dt_1_str).strip() == "":
                 dt_1_str = dados_venda.get("Data", "")
             data_1_parsed = parse_data_br(dt_1_str)
@@ -405,7 +404,7 @@ else:
             col_edit1, col_edit2 = st.columns(2)
 
             with col_edit1:
-                st.subheader(f"Cliente: {dados_venda.get('Cliente', '')}")
+                st.subheader(f"👤 Cliente: {dados_venda.get('Cliente', '')}")
 
                 novo_valor_total = st.number_input(
                     "Valor Total da Venda (R$)",
@@ -417,12 +416,12 @@ else:
                 )
 
                 st.info(
-                    "Valor Pago Registrado Anteriormente: R$"
+                    "💵 **Valor Pago Registrado Anteriormente:** R$"
                     f" {val_pago_atual:,.2f}"
                 )
 
                 valor_novo_pagamento = st.number_input(
-                    "Valor Pago HOJE (Adicionar ao total ja pago)",
+                    "➕ Valor Pago HOJE (Adicionar ao total já pago)",
                     min_value=0.0,
                     value=0.0,
                     format="%.2f",
@@ -431,7 +430,7 @@ else:
                 )
 
                 ajustar_manual = st.checkbox(
-                    "Precisa redefinir o valor total pago manualmente?",
+                    "⚙️ Precisa redefinir o valor total pago manualmente?",
                     key=f"chk_{venda_id_alvo}",
                 )
 
@@ -451,7 +450,7 @@ else:
 
                 if valor_novo_pagamento > 0 and not ajustar_manual:
                     st.success(
-                        f"Soma calculada: R$ {val_pago_atual:,.2f} + R$"
+                        f"💡 Soma calculada: R$ {val_pago_atual:,.2f} + R$"
                         f" {valor_novo_pagamento:,.2f} = **Novo Total Pago: R$"
                         f" {novo_valor_pago_final:,.2f}**"
                     )
@@ -465,7 +464,7 @@ else:
                 )
 
                 nova_data_1 = st.date_input(
-                    "Data do 1 Vencimento",
+                    "Data do 1º Vencimento",
                     data_1_parsed,
                     format="DD/MM/YYYY",
                     key=f"dt1_{venda_id_alvo}",
@@ -487,7 +486,7 @@ else:
                 )
 
                 btn_atualizar = st.button(
-                    "Salvar Pagamento / Alteracoes", type="primary"
+                    "💾 Salvar Pagamento / Alterações", type="primary"
                 )
 
                 if btn_atualizar:
@@ -513,20 +512,20 @@ else:
                             st.session_state.versao_pagto += 1
 
                             st.success(
-                                f"Pagamento de R$ {valor_novo_pagamento:,.2f} salvo com"
+                                f"✅ Pagamento de R$ {valor_novo_pagamento:,.2f} salvo com"
                                 f" sucesso! Novo Total Pago: R$ {novo_valor_pago_final:,.2f}"
                             )
                             st.cache_data.clear()
                             st.rerun()
                         else:
                             st.error(
-                                f"Nao foi possivel localizar o ID {venda_id_alvo} na planilha."
+                                f"Não foi possível localizar o ID {venda_id_alvo} na planilha."
                             )
                     except Exception as e:
                         st.error(f"Erro ao salvar na planilha: {e}")
 
             with col_edit2:
-                st.subheader("Cronograma Recalculado")
+                st.subheader("🗓️ Cronograma Recalculado")
 
                 saldo_div_prev = max(0.0, novo_valor_total - novo_valor_pago_final)
                 c_m1, c_m2 = st.columns(2)
@@ -540,10 +539,10 @@ else:
                     novo_valor_pago_final,
                 )
                 cols_crono_preview = [
-                    "N Parcela",
+                    "Nº Parcela",
                     "Vencimento",
                     "Valor Parcela (R$)",
-                    "Situacao",
+                    "Situação",
                 ]
                 st.dataframe(
                     df_cronograma_prev[cols_crono_preview],
@@ -556,7 +555,7 @@ else:
 
     # --- ABA 3: DASHBOARD & CONTAS A RECEBER ---
     with aba_dash:
-        st.header("Analise Financeira e Contas a Receber")
+        st.header("📈 Análise Financeira e Contas a Receber")
 
         if not df_vendas.empty:
             df_parcelas = expandir_todas_parcelas(df_vendas)
@@ -569,7 +568,7 @@ else:
             meses_opcoes = ["Todos os Meses de Vencimento"] + meses_vencimento
 
             mes_selecionado = st.selectbox(
-                "Selecione o Mes de Vencimento das Parcelas (MM/AAAA):",
+                "📅 Selecione o Mês de Vencimento das Parcelas (MM/AAAA):",
                 meses_opcoes,
             )
 
@@ -581,26 +580,26 @@ else:
                 df_parc_filtrado = df_parcelas.copy()
 
             total_a_receber_mes = df_parc_filtrado[
-                df_parc_filtrado["Situacao"] == "Pendente"
+                df_parc_filtrado["Situação"] == "⏳ Pendente"
             ]["Valor Parcela"].sum()
 
-            total_ja_recebido_mes = df_parc_filtrado[
-                df_parc_filtrado["Situacao"] == "Quitada"
+            total_já_recebido_mes = df_parc_filtrado[
+                df_parc_filtrado["Situação"] == "✅ Quitada"
             ]["Valor Parcela"].sum()
 
             total_geral_mes = df_parc_filtrado["Valor Parcela"].sum()
 
             col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric("Total Previsto no Mes", f"R$ {total_geral_mes:,.2f}")
-            col_m2.metric("Ja Recebido / Quitado", f"R$ {total_ja_recebido_mes:,.2f}")
-            col_m3.metric("A RECEBER no Mes", f"R$ {total_a_receber_mes:,.2f}")
+            col_m1.metric("Total Previsto no Mês", f"R$ {total_geral_mes:,.2f}")
+            col_m2.metric("✅ Já Recebido / Quitado", f"R$ {total_já_recebido_mes:,.2f}")
+            col_m3.metric("📌 A RECEBER no Mês", f"R$ {total_a_receber_mes:,.2f}")
 
             st.divider()
 
-            st.subheader(f"Detalhamento de Parcelas ({mes_selecionado})")
+            st.subheader(f"📋 Detalhamento de Parcelas ({mes_selecionado})")
 
             tipo_filtro_situacao = st.radio(
-                "Filtrar Situacao das Parcelas:",
+                "Filtrar Situação das Parcelas:",
                 [
                     "Apenas Pendentes (A Receber)",
                     "Todas as Parcelas (Quitadas + Pendentes)",
@@ -610,7 +609,7 @@ else:
 
             if "Apenas Pendentes" in tipo_filtro_situacao:
                 df_exibir = df_parc_filtrado[
-                    df_parc_filtrado["Situacao"] == "Pendente"
+                    df_parc_filtrado["Situação"] == "⏳ Pendente"
                 ].copy()
             else:
                 df_exibir = df_parc_filtrado.copy()
@@ -619,10 +618,10 @@ else:
                 df_exibir_tabela = df_exibir[[
                     "Cliente",
                     "Produto",
-                    "N Parcela",
+                    "Nº Parcela",
                     "Vencimento",
                     "Valor Parcela",
-                    "Situacao",
+                    "Situação",
                     "Enviar Lembrete",
                 ]].copy()
 
@@ -639,19 +638,19 @@ else:
                     column_config={
                         "Enviar Lembrete": st.column_config.LinkColumn(
                             "Enviar Lembrete",
-                            display_text="Enviar Mensagem",
+                            display_text="📲 Enviar Mensagem",
                         )
                     },
                 )
             else:
-                st.success("Nenhuma parcela pendente encontrada para este periodo!")
+                st.success("🎉 Nenhuma parcela pendente encontrada para este período!")
 
         else:
             st.info("Nenhuma venda cadastrada ainda.")
 
-    # --- ABA 4: HISTORICO COMPLETO ---
+    # --- ABA 4: HISTÓRICO COMPLETO ---
     with aba_historico:
-        st.header("Todas as Vendas Registradas")
+        st.header("📋 Todas as Vendas Registradas")
         if not df_vendas.empty:
             st.dataframe(df_vendas, use_container_width=True, hide_index=True)
         else:
