@@ -2,6 +2,7 @@ import json
 import re
 import urllib.parse
 import uuid
+import calendar
 from datetime import datetime, date
 import gspread
 from google.oauth2.service_account import Credentials
@@ -34,19 +35,22 @@ COLUNAS_VENDAS = [
 ]
 
 
-# --- FUNÇÃO NATIVA ALTERNATIVA PARA SOMAR MESES (SEM RELATIVEDELTA) ---
+# --- FUNÇÃO NATIVA SEGURA PARA SOMAR MESES ---
 def adicionar_meses(data_origem, meses):
-    """Adiciona 'meses' a um objeto datetime.date nativo sem depender de bibliotecas externas"""
-    if not isinstance(data_origem, date):
+    """Adiciona 'meses' a um objeto date/datetime garantindo o limite de dias do mês destino."""
+    if not isinstance(data_origem, (date, datetime)):
         data_origem = datetime.now().date()
-    
-    ano = data_origem.year + (data_origem.month + meses - 1) // 12
-    mes = (data_origem.month + meses - 1) % 12 + 1
-    
-    # Ajusta o dia para não estourar em meses com menos dias (ex: 31 de fev -> 28 de fev)
-    dias_no_mes = [31, 29 if (ano % 4 == 0 and (ano % 100 != 0 or ano % 400 == 0)) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    dia = min(data_origem.day, dias_no_mes[mes - 1])
-    
+    elif isinstance(data_origem, datetime):
+        data_origem = data_origem.date()
+
+    total_meses = data_origem.month - 1 + meses
+    ano = data_origem.year + (total_meses // 12)
+    mes = (total_meses % 12) + 1
+
+    # Obtém o último dia válido do mês de destino (ex: 28, 29, 30 ou 31)
+    max_dias = calendar.monthrange(ano, mes)[1]
+    dia = min(data_origem.day, max_dias)
+
     return date(ano, mes, dia)
 
 
@@ -214,7 +218,10 @@ def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
-    data_base = parse_data_br(data_primeira)
+    if data_primeira is None:
+        data_base = datetime.now().date()
+    else:
+        data_base = parse_data_br(data_primeira)
 
     saldo_devedor = max(0.0, valor_total - valor_pago)
     valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
@@ -556,7 +563,6 @@ else:
     with aba_atualizar:
         st.header("🔄 Registrar Pagamento / Editar Venda")
         
-        # SÓ CARREGA SE HOUVER REGISTROS NA PLANILHA
         if not df_vendas.empty and len(df_vendas) > 0:
             opcoes_vendas = df_vendas.apply(
                 lambda row: (
