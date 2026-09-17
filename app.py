@@ -66,7 +66,6 @@ def carregar_dados():
         df = df.loc[:, df.columns != ""]
         df = df.loc[:, ~df.columns.duplicated()]
 
-        # Trata erro de digitação de Telenone para Telefone se existir
         if "Telenone" in df.columns and "Telefone" not in df.columns:
             df = df.rename(columns={"Telenone": "Telefone"})
 
@@ -138,18 +137,17 @@ def limpar_telefone(tel_str):
     return num
 
 
-def gerar_link_whatsapp(telefone, cliente, produto, num_parcela, valor, vencimento):
-    """Gera URL com mensagem limpa (TOTALMENTE SEM EMOJIS NO TEXTO DO WHATSAPP)"""
+def gerar_link_whatsapp(telefone, cliente, produto, detalhe_parcela, valor, vencimento):
+    """Gera URL com mensagem de cobrança limpa agrupada"""
     num_limpo = limpar_telefone(telefone)
     if not num_limpo:
         return None
 
     msg = (
         f"Olá, *{cliente}*! Espero que esteja bem.\n\n"
-        f"Estou passando para organizar os pagamentos e enviar o lembrete da parcela *{num_parcela}* "
-        f"referente aos itens: *{produto}*.\n\n"
-        f"- *Valor:* R$ {valor:,.2f}\n"
-        f"- *Vencimento:* {vencimento}\n\n"
+        f"Estou passando para enviar o lembrete de pagamento referente ao mês *{vencimento}*.\n\n"
+        f"📦 *Itens/Parcelas:* {detalhe_parcela}\n"
+        f"💰 *Valor Total do Mês:* R$ {valor:,.2f}\n\n"
         f"Se já tiver efetuado o pagamento, por favor desconsidere esta mensagem. "
         f"Caso precise da chave PIX ou tenha qualquer dúvida, me avise por aqui!"
     )
@@ -231,16 +229,6 @@ def expandir_todas_parcelas(df_vendas):
         )
 
         for _, p in df_crono.iterrows():
-            prod_desc = f"[{categoria}] {produto}" if categoria else produto
-            link_wa = gerar_link_whatsapp(
-                telefone,
-                cliente,
-                prod_desc,
-                p["Nº Parcela"],
-                p["Valor Parcela (R$)"],
-                p["Vencimento"],
-            )
-
             lista_parcelas.append({
                 "ID Venda": venda_id,
                 "Cliente": cliente,
@@ -253,7 +241,6 @@ def expandir_todas_parcelas(df_vendas):
                 "Ano_Mes": p["Ano_Mes"],
                 "Valor Parcela": p["Valor Parcela (R$)"],
                 "Situação": p["Situação"],
-                "Enviar Lembrete": link_wa,
             })
 
     return pd.DataFrame(lista_parcelas)
@@ -301,12 +288,12 @@ else:
         "➕ Cadastrar Venda",
         "🔄 Registrar Pagamento / Editar",
         "📈 Dashboard & Contas a Receber",
-        "📋 Histórico Completo",
+        "📋 Histórico / Ficha do Cliente",
     ])
 
     # --- ABA 1: CADASTRO MULTI-ITENS ---
     with aba_cadastro:
-        st.header("➕ Registrar Nova Venda (Múltiplos Itens)")
+        st.header("➕ Registrar Nova Venda")
 
         st.subheader("1️⃣ Adicionar Itens à Sacola")
         col_c1, col_c2, col_c3 = st.columns(3)
@@ -399,12 +386,35 @@ else:
             st.subheader("2️⃣ Finalizar Cadastro da Venda")
             with st.form("form_finalizar_venda", clear_on_submit=True):
                 col_a, col_b = st.columns(2)
+                
+                # Autocompletar cliente se já existir no banco
+                clientes_existentes = (
+                    df_vendas["Cliente"].dropna().unique().tolist()
+                    if not df_vendas.empty
+                    else []
+                )
+
                 with col_a:
                     data_venda = st.date_input(
                         "Data da Venda", datetime.now(), format="DD/MM/YYYY"
                     )
-                    cliente = st.text_input("Nome do Cliente")
-                    telefone = st.text_input("Telefone / WhatsApp (ex: 84999998888)")
+                    
+                    cliente_existente_sel = st.selectbox(
+                        "👤 Selecionar Cliente Existente (ou escolha 'Novo Cliente')",
+                        ["Novo Cliente"] + sorted(clientes_existentes),
+                    )
+
+                    if cliente_existente_sel == "Novo Cliente":
+                        cliente = st.text_input("Nome do Novo Cliente")
+                        telefone = st.text_input("Telefone / WhatsApp (ex: 84999998888)")
+                    else:
+                        cliente = cliente_existente_sel
+                        tel_sugerido = df_vendas[df_vendas["Cliente"] == cliente][
+                            "Telefone"
+                        ].iloc[0]
+                        telefone = st.text_input(
+                            "Telefone / WhatsApp", value=str(tel_sugerido)
+                        )
 
                 with col_b:
                     valor_pago_inicial = st.number_input(
@@ -423,7 +433,7 @@ else:
                         format="DD/MM/YYYY",
                     )
 
-                submeter = st.form_submit_button("💾 Salvar Venda Completa", type="primary")
+                submeter = st.form_submit_button("💾 Salvar Venda", type="primary")
 
                 if submeter:
                     if cliente.strip() != "":
@@ -431,7 +441,6 @@ else:
                             sheet = obter_conexao()
                             venda_id = str(uuid.uuid4())[:8]
 
-                            # Agrupa categorias e descrições dos produtos
                             cats_unicas = list(
                                 set([item["Categoria"] for item in st.session_state.carrinho])
                             )
@@ -464,10 +473,10 @@ else:
                                 status_inicial,
                             ]
                             sheet.append_row(nova_linha, value_input_option="USER_ENTERED")
-                            
-                            st.session_state.carrinho = []  # Limpa a sacola
+
+                            st.session_state.carrinho = []
                             st.success(
-                                f"Venda para **{cliente}** salva com sucesso! (ID: {venda_id})"
+                                f"Venda para **{cliente}** registrada com sucesso!"
                             )
                             st.cache_data.clear()
                             st.rerun()
@@ -476,7 +485,7 @@ else:
                     else:
                         st.warning("Preencha o nome do cliente.")
         else:
-            st.info("💡 Adicione pelo menos um item à sacola para prosseguir com o cadastro da venda.")
+            st.info("💡 Adicione pelo menos um item à sacola para prosseguir com o cadastro.")
 
     # --- ABA 2: EDITAR / REGISTRAR PAGAMENTO ---
     with aba_atualizar:
@@ -485,8 +494,7 @@ else:
             opcoes_vendas = df_vendas.apply(
                 lambda row: (
                     f"ID: {row.get('ID', '')} | {row.get('Cliente', '')} - "
-                    f"[{row.get('Categoria', 'S/Cat')}] {row.get('Produto', '')[:30]}... | "
-                    f"Total: R$ {safe_float(row.get('Valor Total', 0)):.2f}"
+                    f"Data: {row.get('Data', '')} | Total: R$ {safe_float(row.get('Valor Total', 0)):.2f}"
                 ),
                 axis=1,
             ).tolist()
@@ -520,7 +528,7 @@ else:
                 )
 
                 novo_valor_total = st.number_input(
-                    "Valor Total da Venda (R$)",
+                    "Valor Total desta Venda (R$)",
                     min_value=0.0,
                     value=float(val_total_atual),
                     format="%.2f",
@@ -529,12 +537,12 @@ else:
                 )
 
                 st.info(
-                    "💵 **Valor Pago Registrado Anteriormente:** R$"
+                    "💵 **Valor Já Pago Nesta Venda:** R$"
                     f" {val_pago_atual:,.2f}"
                 )
 
                 valor_novo_pagamento = st.number_input(
-                    "➕ Valor Pago HOJE (Adicionar ao total já pago)",
+                    "➕ Valor Pago HOJE nesta compra (Adicionar ao total já pago)",
                     min_value=0.0,
                     value=0.0,
                     format="%.2f",
@@ -543,13 +551,13 @@ else:
                 )
 
                 ajustar_manual = st.checkbox(
-                    "⚙️ Precisa redefinir o valor total pago manualmente?",
+                    "⚙️ Precisa redefinir o valor pago acumulado manualmente?",
                     key=f"chk_{venda_id_alvo}",
                 )
 
                 if ajustar_manual:
                     novo_valor_pago_final = st.number_input(
-                        "Definir Novo Valor Total Pago Acumulado (R$)",
+                        "Definir Novo Valor Total Pago (R$)",
                         min_value=0.0,
                         value=float(val_pago_atual),
                         format="%.2f",
@@ -559,13 +567,6 @@ else:
                 else:
                     novo_valor_pago_final = min(
                         val_pago_atual + valor_novo_pagamento, novo_valor_total
-                    )
-
-                if valor_novo_pagamento > 0 and not ajustar_manual:
-                    st.success(
-                        f"💡 Soma calculada: R$ {val_pago_atual:,.2f} + R$"
-                        f" {valor_novo_pagamento:,.2f} = **Novo Total Pago: R$"
-                        f" {novo_valor_pago_final:,.2f}**"
                     )
 
                 novas_parcelas = st.number_input(
@@ -625,20 +626,19 @@ else:
                             st.session_state.versao_pagto += 1
 
                             st.success(
-                                f"✅ Pagamento de R$ {valor_novo_pagamento:,.2f} salvo com"
-                                f" sucesso! Novo Total Pago: R$ {novo_valor_pago_final:,.2f}"
+                                f"✅ Alterações salvas com sucesso!"
                             )
                             st.cache_data.clear()
                             st.rerun()
                         else:
                             st.error(
-                                f"Não foi possível localizar o ID {venda_id_alvo} na planilha."
+                                f"Não foi possível localizar a venda com ID {venda_id_alvo}."
                             )
                     except Exception as e:
                         st.error(f"Erro ao salvar na planilha: {e}")
 
             with col_edit2:
-                st.subheader("🗓️ Cronograma Recalculado")
+                st.subheader("🗓️ Cronograma Desta Venda")
 
                 saldo_div_prev = max(0.0, novo_valor_total - novo_valor_pago_final)
                 c_m1, c_m2 = st.columns(2)
@@ -666,7 +666,7 @@ else:
         else:
             st.info("Nenhuma venda registrada para atualizar.")
 
-    # --- ABA 3: DASHBOARD & CONTAS A RECEBER ---
+    # --- ABA 3: DASHBOARD & CONTAS A RECEBER (COM SOMA AGRUPADA POR CLIENTE) ---
     with aba_dash:
         st.header("📈 Análise Financeira e Contas a Receber")
 
@@ -709,71 +709,104 @@ else:
 
             st.divider()
 
-            st.subheader(f"📋 Detalhamento de Parcelas ({mes_selecionado})")
+            st.subheader(f"👥 Cobranças Agrupadas por Cliente ({mes_selecionado})")
+            st.caption("O sistema junta todas as parcelas pendentes do mesmo cliente no mês em um único valor total para facilitar o envio do WhatsApp!")
 
-            tipo_filtro_situacao = st.radio(
-                "Filtrar Situação das Parcelas:",
-                [
-                    "Apenas Pendentes (A Receber)",
-                    "Todas as Parcelas (Quitadas + Pendentes)",
-                ],
-                horizontal=True,
-            )
+            df_pendentes_mes = df_parc_filtrado[
+                df_parc_filtrado["Situação"] == "⏳ Pendente"
+            ]
 
-            if "Apenas Pendentes" in tipo_filtro_situacao:
-                df_exibir = df_parc_filtrado[
-                    df_parc_filtrado["Situação"] == "⏳ Pendente"
-                ].copy()
-            else:
-                df_exibir = df_parc_filtrado.copy()
+            if not df_pendentes_mes.empty:
+                # Agrupa por Cliente e Telefone
+                agrupado_cliente = []
+                for (cliente_nome, tel), grupo in df_pendentes_mes.groupby(
+                    ["Cliente", "Telefone"]
+                ):
+                    val_total_cli = grupo["Valor Parcela"].sum()
+                    detalhes_parcs = " + ".join(
+                        [
+                            f"Parc. {row['Nº Parcela']} ({row['Produto']})"
+                            for _, row in grupo.iterrows()
+                        ]
+                    )
 
-            if not df_exibir.empty:
-                df_exibir_tabela = df_exibir[[
-                    "Cliente",
-                    "Categoria",
-                    "Produto",
-                    "Nº Parcela",
-                    "Vencimento",
-                    "Valor Parcela",
-                    "Situação",
-                    "Enviar Lembrete",
-                ]].copy()
+                    link_wa = gerar_link_whatsapp(
+                        tel,
+                        cliente_nome,
+                        detalhes_parcs,
+                        detalhes_parcs,
+                        val_total_cli,
+                        mes_selecionado,
+                    )
 
-                df_exibir_tabela["Valor Parcela (R$)"] = df_exibir_tabela[
-                    "Valor Parcela"
-                ].apply(lambda x: f"R$ {x:,.2f}")
+                    agrupado_cliente.append({
+                        "Cliente": cliente_nome,
+                        "Telefone": tel,
+                        "Compras Diferentes no Mês": len(grupo),
+                        "Detalhamento das Parcelas": detalhes_parcs,
+                        "Valor Total a Pagar no Mês (R$)": f"R$ {val_total_cli:,.2f}",
+                        "Enviar Cobrança Única": link_wa,
+                    })
 
-                df_exibir_tabela = df_exibir_tabela.drop(columns=["Valor Parcela"])
+                df_agrupado = pd.DataFrame(agrupado_cliente)
 
                 st.dataframe(
-                    df_exibir_tabela,
+                    df_agrupado,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "Enviar Lembrete": st.column_config.LinkColumn(
-                            "Enviar Lembrete",
-                            display_text="📲 Enviar Mensagem",
+                        "Enviar Cobrança Única": st.column_config.LinkColumn(
+                            "Enviar Cobrança Única",
+                            display_text="📲 Enviar Zap Único",
                         )
                     },
                 )
             else:
-                st.success("🎉 Nenhuma parcela pendente encontrada para este período!")
+                st.success("🎉 Nenhuma cobrança pendente para este mês!")
+
+            st.divider()
+            st.subheader("📋 Detalhamento Individual de Parcelas")
+            st.dataframe(
+                df_parc_filtrado[
+                    [
+                        "Cliente",
+                        "Produto",
+                        "Nº Parcela",
+                        "Vencimento",
+                        "Valor Parcela",
+                        "Situação",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
 
         else:
             st.info("Nenhuma venda cadastrada ainda.")
 
-    # --- ABA 4: HISTÓRICO COMPLETO ---
+    # --- ABA 4: HISTÓRICO COMPLETO & FICHA DO CLIENTE ---
     with aba_historico:
-        st.header("📋 Todas as Vendas Registradas")
-        if not df_vendas.empty:
-            cliente_filtro = st.text_input("🔍 Buscar por Nome do Cliente")
-            if cliente_filtro:
-                df_vendas_exibir = df_vendas[
-                    df_vendas["Cliente"].str.contains(cliente_filtro, case=False, na=False)
-                ]
-            else:
-                df_vendas_exibir = df_vendas
+        st.header("📋 Ficha do Cliente & Histórico de Compras")
 
-            st.dataframe(df_vendas_exibir, use_container_width=True, hide_index=True)
+        if not df_vendas.empty:
+            clientes_lista = sorted(df_vendas["Cliente"].dropna().unique().tolist())
+            cliente_sel = st.selectbox("🔍 Escolha um Cliente para ver a Ficha Completa:", ["Todos os Clientes"] + clientes_lista)
+
+            if cliente_sel != "Todos os Clientes":
+                df_cli = df_vendas[df_vendas["Cliente"] == cliente_sel]
+
+                total_comprado = sum([safe_float(v) for v in df_cli["Valor Total"]])
+                total_pago = sum([safe_float(v) for v in df_cli["Valor Pago"]])
+                saldo_devedor_cli = max(0.0, total_comprado - total_pago)
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Total de Compras Histórico", f"R$ {total_comprado:,.2f}")
+                c2.metric("Total Já Pago", f"R$ {total_pago:,.2f}")
+                c3.metric("Saldo Devedor Atual", f"R$ {saldo_devedor_cli:,.2f}")
+
+                st.subheader(f"📦 Compras de {cliente_sel}")
+                st.dataframe(df_cli, use_container_width=True, hide_index=True)
+            else:
+                st.dataframe(df_vendas, use_container_width=True, hide_index=True)
         else:
             st.info("Nenhum registro encontrado.")
