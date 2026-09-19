@@ -243,6 +243,7 @@ def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
+    # Garantia de parsing correto de data
     data_base = parse_data_br(data_primeira)
 
     saldo_devedor = max(0.0, valor_total - valor_pago)
@@ -266,6 +267,7 @@ def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor
     cronograma = []
 
     for i in range(num_parcelas):
+        # Utiliza adicionar_meses para prevenção de estouro de ano (> 9999)
         data_venc = adicionar_meses(data_base, i)
         data_str = data_venc.strftime("%d/%m/%Y")
 
@@ -718,7 +720,7 @@ else:
                 c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div_prev:,.2f}")
 
                 df_cronograma_prev, _ = gerar_cronograma_recalculado(
-                    parse_data_br(nova_data_1),
+                    nova_data_1,
                     novas_parcelas,
                     novo_valor_total,
                     novo_valor_pago_final,
