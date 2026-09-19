@@ -71,7 +71,6 @@ def adicionar_meses(data_origem, meses):
     """Adiciona meses a uma data garantindo que o ano nunca ultrapasse 9999."""
     dt_base = parse_data_br(data_origem)
 
-    # Limita o número de meses para evitar estouro de ano (máximo 100 anos / 1200 meses)
     try:
         meses_int = int(meses)
         if meses_int > 1200:
@@ -243,9 +242,7 @@ def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
-    # Garantia de parsing correto de data
     data_base = parse_data_br(data_primeira)
-
     saldo_devedor = max(0.0, valor_total - valor_pago)
     valor_original_parcela = valor_total / num_parcelas if num_parcelas > 0 else 0
 
@@ -267,7 +264,6 @@ def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor
     cronograma = []
 
     for i in range(num_parcelas):
-        # Utiliza adicionar_meses para prevenção de estouro de ano (> 9999)
         data_venc = adicionar_meses(data_base, i)
         data_str = data_venc.strftime("%d/%m/%Y")
 
@@ -454,7 +450,7 @@ else:
         if st.session_state.carrinho:
             st.subheader("🛍️ Itens na Sacola")
             df_carrinho = pd.DataFrame(st.session_state.carrinho)
-            st.dataframe(df_carrinho, width="stretch", hide_index=True)
+            st.dataframe(df_carrinho, use_container_width=True, hide_index=True)
 
             val_total_sacola = df_carrinho["Subtotal"].sum()
             st.markdown(f"### 💰 **Total da Sacola: R$ {val_total_sacola:,.2f}**")
@@ -579,7 +575,7 @@ else:
         with col_c2:
             st.subheader("📋 Clientes Cadastrados")
             if not df_clientes.empty:
-                st.dataframe(df_clientes, width="stretch", hide_index=True)
+                st.dataframe(df_clientes, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhum cliente cadastrado ainda.")
 
@@ -610,7 +606,6 @@ else:
                 dt_1_str = dados_venda.get("Data", "")
 
             data_1_parsed = parse_data_br(dt_1_str)
-
             key_pagto_hoje = f"novo_pagto_{venda_id_alvo}_{st.session_state.versao_pagto}"
 
             col_edit1, col_edit2 = st.columns(2)
@@ -726,7 +721,7 @@ else:
                     novo_valor_pago_final,
                 )
                 cols_crono_preview = ["Nº Parcela", "Vencimento", "Valor Parcela (R$)", "Situação"]
-                st.dataframe(df_cronograma_prev[cols_crono_preview], width="stretch", hide_index=True)
+                st.dataframe(df_cronograma_prev[cols_crono_preview], use_container_width=True, hide_index=True)
 
         else:
             st.info("Nenhuma venda registrada até o momento.")
@@ -793,7 +788,7 @@ else:
 
                     st.dataframe(
                         df_agrupado,
-                        width="stretch",
+                        use_container_width=True,
                         hide_index=True,
                         column_config={
                             "Enviar Cobrança Única": st.column_config.LinkColumn(
@@ -809,7 +804,7 @@ else:
                 st.subheader("📋 Detalhamento Individual de Parcelas")
                 st.dataframe(
                     df_parc_filtrado[["Cliente", "Produto", "Nº Parcela", "Vencimento", "Valor Parcela", "Situação"]],
-                    width="stretch",
+                    use_container_width=True,
                     hide_index=True,
                 )
         else:
@@ -825,19 +820,33 @@ else:
 
             if cliente_sel != "Todos os Clientes":
                 df_cli = df_vendas[df_vendas["Cliente"] == cliente_sel]
-
-                total_comprado = sum([safe_float(v) for v in df_cli["Valor Total"]])
-                total_pago = sum([safe_float(v) for v in df_cli["Valor Pago"]])
-                saldo_devedor_cli = max(0.0, total_comprado - total_pago)
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Total de Compras Histórico", f"R$ {total_comprado:,.2f}")
-                c2.metric("Total Já Pago", f"R$ {total_pago:,.2f}")
-                c3.metric("Saldo Devedor Atual", f"R$ {saldo_devedor_cli:,.2f}")
-
-                st.subheader(f"📦 Compras de {cliente_sel}")
-                st.dataframe(df_cli, width="stretch", hide_index=True)
             else:
-                st.dataframe(df_vendas, width="stretch", hide_index=True)
+                df_cli = df_vendas.copy()
+
+            total_comprado = sum([safe_float(v) for v in df_cli["Valor Total"]])
+            total_pago = sum([safe_float(v) for v in df_cli["Valor Pago"]])
+            saldo_devedor_total = total_comprado - total_pago
+
+            col_h1, col_h2, col_h3 = st.columns(3)
+            col_h1.metric("Total Histórico Comprado", f"R$ {total_comprado:,.2f}")
+            col_h2.metric("Total Já Pago", f"R$ {total_pago:,.2f}")
+            col_h3.metric("Saldo Devedor Acumulado", f"R$ {saldo_devedor_total:,.2f}")
+
+            st.divider()
+            st.subheader(f"🛒 Registos de Vendas - {cliente_sel}")
+
+            colunas_exibir = [
+                "ID",
+                "Data",
+                "Cliente",
+                "Telefone",
+                "Categoria",
+                "Produto",
+                "Valor Total",
+                "Valor Pago",
+                "Parcelas",
+                "Status",
+            ]
+            st.dataframe(df_cli[colunas_exibir], use_container_width=True, hide_index=True)
         else:
-            st.info("Nenhum registro encontrado.")
+            st.info("Nenhuma venda registada até ao momento.")
