@@ -36,41 +36,62 @@ COLUNAS_VENDAS = [
 ]
 
 
-# --- FUNÇÃO DE CONVERSÃO DE DATA DEFENSIVA ---
+# --- FUNÇÃO DE CONVERSÃO DE DATA DEFENSIVA COM LIMITE DE ANO ---
 def parse_data_br(data_raw):
-    """Converte com segurança qualquer entrada (str, Timestamp, datetime, date) para datetime.date."""
+    """Converte com segurança qualquer entrada para datetime.date limitando o ano."""
+    dt_fallback = datetime.now().date()
+
     if data_raw is None or pd.isna(data_raw):
-        return datetime.now().date()
+        return dt_fallback
 
     if isinstance(data_raw, date) and not isinstance(data_raw, datetime):
-        return data_raw
+        return data_raw if 1 <= data_raw.year <= 9999 else dt_fallback
 
     if isinstance(data_raw, (datetime, pd.Timestamp)):
-        return data_raw.date()
+        d = data_raw.date()
+        return d if 1 <= d.year <= 9999 else dt_fallback
 
     s = str(data_raw).strip()
     if not s:
-        return datetime.now().date()
+        return dt_fallback
 
     formatos = ["%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"]
     for fmt in formatos:
         try:
-            return datetime.strptime(s, fmt).date()
+            d = datetime.strptime(s, fmt).date()
+            if 1 <= d.year <= 9999:
+                return d
         except ValueError:
             pass
 
-    return datetime.now().date()
+    return dt_fallback
 
 
 def adicionar_meses(data_origem, meses):
-    """Adiciona meses a uma data tratando limites de dias de cada mês com fallback seguro."""
+    """Adiciona meses a uma data garantindo que o ano nunca ultrapasse 9999."""
     dt_base = parse_data_br(data_origem)
+
+    # Limita o número de meses para evitar estouro de ano (máximo 100 anos / 1200 meses)
     try:
-        return dt_base + relativedelta(months=int(meses))
+        meses_int = int(meses)
+        if meses_int > 1200:
+            meses_int = 1200
+        elif meses_int < -1200:
+            meses_int = -1200
+    except (ValueError, TypeError):
+        meses_int = 0
+
+    try:
+        dt_res = dt_base + relativedelta(months=meses_int)
+        if dt_res.year > 9999:
+            return date(9999, 12, 31)
+        return dt_res
     except Exception:
         try:
-            total_meses = dt_base.month - 1 + int(meses)
+            total_meses = dt_base.month - 1 + meses_int
             ano = dt_base.year + (total_meses // 12)
+            if ano > 9999:
+                ano = 9999
             mes = (total_meses % 12) + 1
             max_dias = calendar.monthrange(ano, mes)[1]
             dia = min(dt_base.day, max_dias)
@@ -216,13 +237,12 @@ def gerar_link_whatsapp(telefone, cliente, produto, detalhe_parcela, valor, venc
     return f"https://wa.me/{num_limpo}?text={msg_encoded}"
 
 
-# --- RECALCULO DE CRONOGRAMA (CORRIGIDO NAS LINHAS 180-200) ---
+# --- RECALCULO DE CRONOGRAMA ---
 def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor_pago):
     num_parcelas = max(1, safe_int(num_parcelas, 1))
     valor_total = safe_float(valor_total, 0.0)
     valor_pago = safe_float(valor_pago, 0.0)
 
-    # Garantia de objeto datetime.date
     data_base = parse_data_br(data_primeira)
 
     saldo_devedor = max(0.0, valor_total - valor_pago)
@@ -246,7 +266,6 @@ def gerar_cronograma_recalculado(data_primeira, num_parcelas, valor_total, valor
     cronograma = []
 
     for i in range(num_parcelas):
-        # Utiliza a função com fallback seguro
         data_venc = adicionar_meses(data_base, i)
         data_str = data_venc.strftime("%d/%m/%Y")
 
@@ -433,7 +452,7 @@ else:
         if st.session_state.carrinho:
             st.subheader("🛍️ Itens na Sacola")
             df_carrinho = pd.DataFrame(st.session_state.carrinho)
-            st.dataframe(df_carrinho, use_container_width=True, hide_index=True)
+            st.dataframe(df_carrinho, width="stretch", hide_index=True)
 
             val_total_sacola = df_carrinho["Subtotal"].sum()
             st.markdown(f"### 💰 **Total da Sacola: R$ {val_total_sacola:,.2f}**")
@@ -558,7 +577,7 @@ else:
         with col_c2:
             st.subheader("📋 Clientes Cadastrados")
             if not df_clientes.empty:
-                st.dataframe(df_clientes, use_container_width=True, hide_index=True)
+                st.dataframe(df_clientes, width="stretch", hide_index=True)
             else:
                 st.info("Nenhum cliente cadastrado ainda.")
 
@@ -588,7 +607,6 @@ else:
             if not dt_1_str or str(dt_1_str).strip() == "":
                 dt_1_str = dados_venda.get("Data", "")
 
-            # Converte a string recuperada para date
             data_1_parsed = parse_data_br(dt_1_str)
 
             key_pagto_hoje = f"novo_pagto_{venda_id_alvo}_{st.session_state.versao_pagto}"
@@ -699,7 +717,6 @@ else:
                 c_m1.metric("Novo Total Pago", f"R$ {novo_valor_pago_final:,.2f}")
                 c_m2.metric("Saldo Devedor Restante", f"R$ {saldo_div_prev:,.2f}")
 
-                # CHAMADA DA LINHA 648 AGORA TRATADA COM CONVERSÃO EXPLÍCITA
                 df_cronograma_prev, _ = gerar_cronograma_recalculado(
                     parse_data_br(nova_data_1),
                     novas_parcelas,
@@ -707,7 +724,7 @@ else:
                     novo_valor_pago_final,
                 )
                 cols_crono_preview = ["Nº Parcela", "Vencimento", "Valor Parcela (R$)", "Situação"]
-                st.dataframe(df_cronograma_prev[cols_crono_preview], use_container_width=True, hide_index=True)
+                st.dataframe(df_cronograma_prev[cols_crono_preview], width="stretch", hide_index=True)
 
         else:
             st.info("Nenhuma venda registrada até o momento.")
@@ -774,7 +791,7 @@ else:
 
                     st.dataframe(
                         df_agrupado,
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                         column_config={
                             "Enviar Cobrança Única": st.column_config.LinkColumn(
@@ -790,7 +807,7 @@ else:
                 st.subheader("📋 Detalhamento Individual de Parcelas")
                 st.dataframe(
                     df_parc_filtrado[["Cliente", "Produto", "Nº Parcela", "Vencimento", "Valor Parcela", "Situação"]],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
         else:
@@ -817,8 +834,8 @@ else:
                 c3.metric("Saldo Devedor Atual", f"R$ {saldo_devedor_cli:,.2f}")
 
                 st.subheader(f"📦 Compras de {cliente_sel}")
-                st.dataframe(df_cli, use_container_width=True, hide_index=True)
+                st.dataframe(df_cli, width="stretch", hide_index=True)
             else:
-                st.dataframe(df_vendas, use_container_width=True, hide_index=True)
+                st.dataframe(df_vendas, width="stretch", hide_index=True)
         else:
-            st.info("Nenum registro encontrado.")
+            st.info("Nenhum registro encontrado.")
