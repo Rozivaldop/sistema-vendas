@@ -145,17 +145,36 @@ def limpar_telefone(tel_str):
 
 # --- CONEXÃO FLEXÍVEL COM O GOOGLE SHEETS (RENDER / STREAMLIT CLOUD / LOCAL) ---
 def obter_credenciais_e_url():
-    """Busca o JSON e a URL primeiro nas variáveis de ambiente (Render), depois no st.secrets."""
+    """Busca o JSON e a URL primeiro nas variáveis de ambiente do Render (os.environ)
+    sem disparar erro de secrets.toml inexistente."""
+
     json_string = os.environ.get("GSPREAD_JSON")
     spreadsheet_url = os.environ.get("GSPREAD_SPREADSHEET")
 
-    if not json_string and "json_string" in st.secrets:
-        json_string = st.secrets["json_string"]
-    elif not json_string and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-        json_string = st.secrets["connections"]["gsheets"].get("json_string")
+    if not json_string or not spreadsheet_url:
+        try:
+            if "json_string" in st.secrets:
+                json_string = json_string or st.secrets["json_string"]
+            elif (
+                "connections" in st.secrets
+                and "gsheets" in st.secrets["connections"]
+            ):
+                json_string = (
+                    json_string
+                    or st.secrets["connections"]["gsheets"].get("json_string")
+                )
 
-    if not spreadsheet_url and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-        spreadsheet_url = st.secrets["connections"]["gsheets"].get("spreadsheet")
+            if (
+                "connections" in st.secrets
+                and "gsheets" in st.secrets["connections"]
+            ):
+                spreadsheet_url = (
+                    spreadsheet_url
+                    or st.secrets["connections"]["gsheets"].get("spreadsheet")
+                )
+        except Exception:
+            # Silencia o erro de arquivo secrets.toml ausente no servidor do Render
+            pass
 
     return json_string, spreadsheet_url
 
@@ -164,7 +183,7 @@ def obter_credenciais_e_url():
 def obter_client_gspread():
     json_string, _ = obter_credenciais_e_url()
     if not json_string:
-        st.error("❌ Credenciais do Google Sheets (GSPREAD_JSON) não foram encontradas.")
+        st.error("❌ Credenciais do Google Sheets (GSPREAD_JSON) não foram encontradas nas variáveis do Render.")
         st.stop()
 
     scope = [
@@ -181,7 +200,7 @@ def obter_client_gspread():
 def obter_doc_gspread():
     _, spreadsheet_url = obter_credenciais_e_url()
     if not spreadsheet_url:
-        st.error("❌ URL da planilha (GSPREAD_SPREADSHEET) não encontrada.")
+        st.error("❌ URL da planilha (GSPREAD_SPREADSHEET) não encontrada nas variáveis do Render.")
         st.stop()
     client = obter_client_gspread()
     return client.open_by_url(spreadsheet_url)
