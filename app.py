@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import urllib.parse
 import uuid
@@ -142,29 +143,57 @@ def limpar_telefone(tel_str):
     return num
 
 
-# --- CONEXÃO COM O GOOGLE SHEETS ---
+# --- CONEXÃO FLEXÍVEL COM O GOOGLE SHEETS (RENDER / STREAMLIT CLOUD / LOCAL) ---
+def obter_credenciais_e_url():
+    """Busca o JSON e a URL primeiro nas variáveis de ambiente (Render), depois no st.secrets."""
+    json_string = os.environ.get("GSPREAD_JSON")
+    spreadsheet_url = os.environ.get("GSPREAD_SPREADSHEET")
+
+    if not json_string and "json_string" in st.secrets:
+        json_string = st.secrets["json_string"]
+    elif not json_string and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        json_string = st.secrets["connections"]["gsheets"].get("json_string")
+
+    if not spreadsheet_url and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        spreadsheet_url = st.secrets["connections"]["gsheets"].get("spreadsheet")
+
+    return json_string, spreadsheet_url
+
+
+@st.cache_resource
 def obter_client_gspread():
+    json_string, _ = obter_credenciais_e_url()
+    if not json_string:
+        st.error("❌ Credenciais do Google Sheets (GSPREAD_JSON) não foram encontradas.")
+        st.stop()
+
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive",
     ]
-    service_account_info = json.loads(st.secrets["json_string"])
+    service_account_info = json.loads(json_string)
     creds = Credentials.from_service_account_info(
         service_account_info, scopes=scope
     )
     return gspread.authorize(creds)
 
 
-def obter_aba_vendas():
+def obter_doc_gspread():
+    _, spreadsheet_url = obter_credenciais_e_url()
+    if not spreadsheet_url:
+        st.error("❌ URL da planilha (GSPREAD_SPREADSHEET) não encontrada.")
+        st.stop()
     client = obter_client_gspread()
-    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    return client.open_by_url(url).sheet1
+    return client.open_by_url(spreadsheet_url)
+
+
+def obter_aba_vendas():
+    doc = obter_doc_gspread()
+    return doc.sheet1
 
 
 def obter_aba_clientes():
-    client = obter_client_gspread()
-    url = st.secrets["connections"]["gsheets"]["spreadsheet"]
-    doc = client.open_by_url(url)
+    doc = obter_doc_gspread()
     try:
         sheet_cli = doc.worksheet("Clientes")
     except Exception:
@@ -825,28 +854,19 @@ else:
 
             total_comprado = sum([safe_float(v) for v in df_cli["Valor Total"]])
             total_pago = sum([safe_float(v) for v in df_cli["Valor Pago"]])
-            saldo_devedor_total = total_comprado - total_pago
+            saldo_devedor_total = max(0.0, total_comprado - total_pago)
 
             col_h1, col_h2, col_h3 = st.columns(3)
             col_h1.metric("Total Histórico Comprado", f"R$ {total_comprado:,.2f}")
             col_h2.metric("Total Já Pago", f"R$ {total_pago:,.2f}")
-            col_h3.metric("Saldo Devedor Acumulado", f"R$ {saldo_devedor_total:,.2f}")
+            col_h3.metric("Saldo Devedor Atual", f"R$ {saldo_devedor_total:,.2f}")
 
             st.divider()
-            st.subheader(f"🛒 Registos de Vendas - {cliente_sel}")
-
-            colunas_exibir = [
-                "ID",
-                "Data",
-                "Cliente",
-                "Telefone",
-                "Categoria",
-                "Produto",
-                "Valor Total",
-                "Valor Pago",
-                "Parcelas",
-                "Status",
-            ]
-            st.dataframe(df_cli[colunas_exibir], use_container_width=True, hide_index=True)
+            st.subheader("📦 Compras do Cliente")
+            st.dataframe(
+                df_cli[["ID", "Data", "Cliente", "Telefone", "Categoria", "Produto", "Valor Total", "Valor Pago", "Parcelas", "Status"]],
+                use_container_width=True,
+                hide_index=True,
+            )
         else:
-            st.info("Nenhuma venda registada até ao momento.")
+            st.info("Nenhuma venda cadastrada para exibir o histórico.")
