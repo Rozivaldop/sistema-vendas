@@ -173,7 +173,6 @@ def obter_credenciais_e_url():
                     or st.secrets["connections"]["gsheets"].get("spreadsheet")
                 )
         except Exception:
-            # Silencia o erro de arquivo secrets.toml ausente no servidor do Render
             pass
 
     return json_string, spreadsheet_url
@@ -221,6 +220,8 @@ def obter_aba_clientes():
     return sheet_cli
 
 
+# --- FUNÇÕES DE LEITURA COM CACHE DE PERFORMANCE (60 SEGUNDOS) ---
+@st.cache_data(ttl=60)
 def carregar_dados_vendas():
     try:
         sheet = obter_aba_vendas()
@@ -247,6 +248,7 @@ def carregar_dados_vendas():
         return pd.DataFrame(columns=COLUNAS_VENDAS)
 
 
+@st.cache_data(ttl=60)
 def carregar_dados_clientes():
     try:
         sheet_cli = obter_aba_clientes()
